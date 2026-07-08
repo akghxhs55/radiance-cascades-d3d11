@@ -1,0 +1,71 @@
+# CMake build directories
+/build/
+/out/
+/cmake-build-*/
+
+# CMake generated files
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/install_manifest.txt
+/Testing/
+CMakeUserPresets.json
+
+# Ninja generated files
+/.ninja_deps
+/.ninja_log
+/build.ninja
+/rules.ninja
+
+# Compiled objects and binaries
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.exp
+*.ilk
+*.pdb
+*.idb
+*.iobj
+*.ipdb
+*.pdbstr
+*.pch
+*.res
+*.map
+
+# MSVC and Visual Studio local files
+/.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.user
+*.vc.db
+*.VC.db
+*.opendb
+*.tlog
+*.lastbuildstate
+
+# JetBrains IDE local files
+/.idea/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
