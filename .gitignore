@@ -69,3 +69,7 @@ CMakeUserPresets.json
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# AI generated files
+/.codex/
+/.agents/
