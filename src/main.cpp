@@ -1,19 +1,19 @@
-﻿#include <array>
+#include <array>
 #include <optional>
 #include <Windows.h>
 #include <imgui_impl_win32.h>
 
 #include "Renderer.h"
+#include "Scene.h"
 #include "Vertex.h"
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-
 std::optional<WPARAM> ProcessWindowMessages();
 
-std::array constexpr TriangleVertices = {
-    Vertex{ .position = { 0.0f, 0.5f, 0.0f },   .color = { 1.0f, 0.0f, 0.0f, 1.0f } },
-    Vertex{ .position = { 0.5f, -0.5f, 0.0f },  .color = { 0.0f, 1.0f, 0.0f, 1.0f } },
-    Vertex{ .position = { -0.5f, -0.5f, 0.0f }, .color = { 0.0f, 0.0f, 1.0f, 1.0f } },
+std::array constexpr FullscreenTriangleVertices = {
+    Vertex{ .position = { -1.0f, -1.0f, 0.0f }, .uv = { 0.0f, 1.0f } },
+    Vertex{ .position = { -1.0f,  3.0f, 0.0f }, .uv = { 0.0f, -1.0f } },
+    Vertex{ .position = {  3.0f, -1.0f, 0.0f }, .uv = { 2.0f, 1.0f } },
 };
 
 int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
@@ -30,38 +30,32 @@ int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
     RegisterClassW(&wndClass);
 
     HWND const hWnd = CreateWindowExW(
-        0,
-        WindowClass,
-        WindowTitle,
+        0, WindowClass, WindowTitle,
         WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 1024, 1024,
-        nullptr,
-        nullptr,
-        instanceHandle,
-        nullptr
+        nullptr, nullptr, instanceHandle, nullptr
     );
 
     ShowWindow(hWnd, showCommand);
     UpdateWindow(hWnd);
 
     Renderer renderer(hWnd);
-    renderer.SetVertices(TriangleVertices);
+    renderer.SetVertices(FullscreenTriangleVertices);
 
     while (true)
     {
-        if (const auto ExitCode = ProcessWindowMessages())
+        if (const auto exitCode = ProcessWindowMessages())
         {
-            return static_cast<int>(*ExitCode);
+            return static_cast<int>(*exitCode);
         }
 
-        renderer.Render();
+        renderer.Render(SampleScene);
     }
 }
 
 int main()
 {
     HINSTANCE const hInstance = GetModuleHandle(nullptr);
-
     return Run(hInstance);
 }
 
@@ -98,16 +92,16 @@ LRESULT CALLBACK WndProc(HWND const windowHandle, UINT const message, WPARAM con
 
 std::optional<WPARAM> ProcessWindowMessages()
 {
-    MSG Message = {};
-    while (PeekMessage(&Message, nullptr, 0, 0, PM_REMOVE))
+    MSG message = {};
+    while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE))
     {
-        if (Message.message == WM_QUIT)
+        if (message.message == WM_QUIT)
         {
-            return Message.wParam;
+            return message.wParam;
         }
 
-        TranslateMessage(&Message);
-        DispatchMessage(&Message);
+        TranslateMessage(&message);
+        DispatchMessage(&message);
     }
 
     return std::nullopt;

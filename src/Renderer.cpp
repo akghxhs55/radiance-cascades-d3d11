@@ -1,4 +1,4 @@
-﻿#include "Renderer.h"
+#include "Renderer.h"
 
 #include <array>
 #include <d3dcompiler.h>
@@ -9,6 +9,46 @@
 #include "imgui_impl_win32.h"
 #include "Vertex.h"
 
+namespace
+{
+    constexpr UINT MaxCircles = 16;
+    constexpr UINT MaxBoxes = 16;
+
+    struct GpuCircleData
+    {
+        DirectX::XMFLOAT2 center;
+        float radius;
+        float padding;
+    };
+
+    struct GpuCircleEmission
+    {
+        DirectX::XMFLOAT3 emission;
+        float padding;
+    };
+
+    struct GpuBox
+    {
+        DirectX::XMFLOAT2 center;
+        DirectX::XMFLOAT2 halfExtent;
+    };
+
+    struct SceneConstants
+    {
+        std::array<GpuCircleData, MaxCircles> circleData = {};
+        std::array<GpuCircleEmission, MaxCircles> circleEmission = {};
+        std::array<GpuBox, MaxBoxes> boxes = {};
+        UINT circleCount = 0;
+        UINT boxCount = 0;
+        UINT padding[2] = {};
+    };
+
+    static_assert(sizeof(GpuCircleData) == 16);
+    static_assert(sizeof(GpuCircleEmission) == 16);
+    static_assert(sizeof(GpuBox) == 16);
+    static_assert(sizeof(SceneConstants) % 16 == 0);
+}
+
 Renderer::Renderer(HWND const windowHandle)
     : windowHandle(windowHandle)
 {
@@ -16,6 +56,7 @@ Renderer::Renderer(HWND const windowHandle)
     CreateRenderTargetView();
     CreateRasterizerState();
     CreateShaders();
+    CreateSceneConstantBuffer();
     InitializeImGui();
 }
 
@@ -31,6 +72,7 @@ Renderer::~Renderer() noexcept
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
 
+    sceneConstantBuffer.Reset();
     vertexBuffer.Reset();
     inputLayout.Reset();
     pixelShader.Reset();
@@ -42,8 +84,9 @@ Renderer::~Renderer() noexcept
     device.Reset();
 }
 
-void Renderer::Render()
+void Renderer::Render(Scene const& scene)
 {
+    UpdateSceneConstantBuffer(scene);
     PrepareFrame();
 
     deviceContext->Draw(vertexCount, 0);
@@ -185,24 +228,15 @@ void Renderer::CreateShaders()
 
     ThrowIfFailed(
         D3DCompileFromFile(
-            L"shaders/Shader.hlsl",
-            nullptr,
-            nullptr,
-            "VSMain",
-            "vs_5_0",
-            0,
-            0,
-            vertexShaderBlob.ReleaseAndGetAddressOf(),
-            nullptr
+            L"shaders/Shader.hlsl", nullptr, nullptr, "VSMain", "vs_5_0", 0, 0,
+            vertexShaderBlob.ReleaseAndGetAddressOf(), nullptr
         ),
         "D3DCompileFromFile failed"
     );
 
     ThrowIfFailed(
         device->CreateVertexShader(
-            vertexShaderBlob->GetBufferPointer(),
-            vertexShaderBlob->GetBufferSize(),
-            nullptr,
+            vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize(), nullptr,
             vertexShader.ReleaseAndGetAddressOf()
         ),
         "ID3D11Device::CreateVertexShader failed"
@@ -210,58 +244,56 @@ void Renderer::CreateShaders()
 
     ThrowIfFailed(
         D3DCompileFromFile(
-            L"shaders/Shader.hlsl",
-            nullptr,
-            nullptr,
-            "PSMain",
-            "ps_5_0",
-            0,
-            0,
-            pixelShaderBlob.ReleaseAndGetAddressOf(),
-            nullptr
+            L"shaders/Shader.hlsl", nullptr, nullptr, "PSMain", "ps_5_0", 0, 0,
+            pixelShaderBlob.ReleaseAndGetAddressOf(), nullptr
         ),
         "D3DCompileFromFile failed"
     );
 
     ThrowIfFailed(
         device->CreatePixelShader(
-            pixelShaderBlob->GetBufferPointer(),
-            pixelShaderBlob->GetBufferSize(),
-            nullptr,
+            pixelShaderBlob->GetBufferPointer(), pixelShaderBlob->GetBufferSize(), nullptr,
             pixelShader.ReleaseAndGetAddressOf()
         ),
         "ID3D11Device::CreatePixelShader failed"
     );
 
     std::array constexpr layout = {
-        D3D11_INPUT_ELEMENT_DESC {
-            .SemanticName = "POSITION",
-            .SemanticIndex = 0,
-            .Format = DXGI_FORMAT_R32G32B32_FLOAT,
-            .InputSlot = 0,
+        D3D11_INPUT_ELEMENT_DESC{
+            .SemanticName = "POSITION", .SemanticIndex = 0,
+            .Format = DXGI_FORMAT_R32G32B32_FLOAT, .InputSlot = 0,
             .AlignedByteOffset = offsetof(Vertex, position),
-            .InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA,
-            .InstanceDataStepRate = 0,
+            .InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA, .InstanceDataStepRate = 0,
         },
-        D3D11_INPUT_ELEMENT_DESC  {
-            .SemanticName = "COLOR",
-            .SemanticIndex = 0,
-            .Format = DXGI_FORMAT_R32G32B32A32_FLOAT,
-            .InputSlot = 0,
-            .AlignedByteOffset = offsetof(Vertex, color),
-            .InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA,
-        }
+        D3D11_INPUT_ELEMENT_DESC{
+            .SemanticName = "TEXCOORD", .SemanticIndex = 0,
+            .Format = DXGI_FORMAT_R32G32_FLOAT, .InputSlot = 0,
+            .AlignedByteOffset = offsetof(Vertex, uv),
+            .InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA, .InstanceDataStepRate = 0,
+        },
     };
 
     ThrowIfFailed(
         device->CreateInputLayout(
-            layout.data(),
-            layout.size(),
-            vertexShaderBlob->GetBufferPointer(),
-            vertexShaderBlob->GetBufferSize(),
+            layout.data(), static_cast<UINT>(layout.size()),
+            vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize(),
             inputLayout.ReleaseAndGetAddressOf()
         ),
         "ID3D11Device::CreateInputLayout failed"
+    );
+}
+
+void Renderer::CreateSceneConstantBuffer()
+{
+    D3D11_BUFFER_DESC constexpr bufferDesc = {
+        .ByteWidth = static_cast<UINT>(sizeof(SceneConstants)),
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
+    };
+
+    ThrowIfFailed(
+        device->CreateBuffer(&bufferDesc, nullptr, sceneConstantBuffer.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateBuffer for scene constants failed"
     );
 }
 
@@ -273,25 +305,57 @@ void Renderer::InitializeImGui()
     ImGui_ImplDX11_Init(device.Get(), deviceContext.Get());
 }
 
+void Renderer::UpdateSceneConstantBuffer(Scene const& scene)
+{
+    SceneConstants constants = {};
+
+    for (Circle const& circle : scene.circles)
+    {
+        if (constants.circleCount == MaxCircles)
+        {
+            break;
+        }
+
+        UINT const index = constants.circleCount++;
+        constants.circleData[index] = {
+            .center = circle.center,
+            .radius = circle.radius,
+        };
+        constants.circleEmission[index] = {
+            .emission = circle.emission,
+        };
+    }
+
+    for (Box const& box : scene.boxes)
+    {
+        if (constants.boxCount == MaxBoxes)
+        {
+            break;
+        }
+
+        constants.boxes[constants.boxCount++] = {
+            .center = box.center,
+            .halfExtent = box.halfExtent,
+        };
+    }
+
+    deviceContext->UpdateSubresource(sceneConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
+}
+
 void Renderer::PrepareFrame()
 {
-    deviceContext->ClearRenderTargetView(renderTargetView.Get(), clearColor);
-
     deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    deviceContext->RSSetViewports(1,&viewport);
+    deviceContext->RSSetViewports(1, &viewport);
     deviceContext->RSSetState(rasterizerState.Get());
-
     deviceContext->OMSetRenderTargets(1, renderTargetView.GetAddressOf(), nullptr);
     deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-
     deviceContext->VSSetShader(vertexShader.Get(), nullptr, 0);
     deviceContext->PSSetShader(pixelShader.Get(), nullptr, 0);
+    deviceContext->PSSetConstantBuffers(0, 1, sceneConstantBuffer.GetAddressOf());
     deviceContext->IASetInputLayout(inputLayout.Get());
 
     UINT constexpr stride = sizeof(Vertex);
     UINT constexpr offset = 0;
-
     deviceContext->IASetVertexBuffers(0, 1, vertexBuffer.GetAddressOf(), &stride, &offset);
 }
 
@@ -306,7 +370,6 @@ void Renderer::DrawDebugUi()
     ImGui::Begin("Renderer");
     ImGui::Text("FPS: %.1f", io.Framerate);
     ImGui::Text("Frame Time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
-    ImGui::ColorEdit4("Clear Color", clearColor);
     ImGui::Checkbox("VSync", &vSyncEnabled);
     ImGui::End();
 

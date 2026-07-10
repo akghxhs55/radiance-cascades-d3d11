@@ -1,10 +1,11 @@
-﻿#pragma once
+#pragma once
 
 #include <Windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <span>
 
+#include "Scene.h"
 #include "Vertex.h"
 
 class Renderer
@@ -16,7 +17,7 @@ public:
     Renderer(Renderer const&) = delete;
     Renderer& operator=(Renderer const&) = delete;
 
-    void Render();
+    void Render(Scene const& scene);
     void SetVertices(std::span<Vertex const> vertices);
 
 private:
@@ -24,8 +25,10 @@ private:
     void CreateRenderTargetView();
     void CreateRasterizerState();
     void CreateShaders();
+    void CreateSceneConstantBuffer();
     void InitializeImGui();
 
+    void UpdateSceneConstantBuffer(Scene const& scene);
     void PrepareFrame();
     void DrawDebugUi();
 
@@ -45,7 +48,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
     UINT vertexCount = 0;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> sceneConstantBuffer;
 
-    float clearColor[4] = { 0.0f, 0.0f, 0.2f, 1.0f };
     bool vSyncEnabled = true;
 };

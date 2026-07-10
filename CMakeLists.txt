@@ -8,6 +8,7 @@ add_executable(RadianceCascades
         src/main.cpp
         src/Renderer.h
         src/Renderer.cpp
+        src/Scene.h
         src/D3DUtils.h
         src/Vertex.h
 
