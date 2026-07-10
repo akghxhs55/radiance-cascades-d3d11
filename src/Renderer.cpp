@@ -4,14 +4,19 @@
 #include <d3dcompiler.h>
 
 #include "D3DUtils.h"
+#include "imgui.h"
+#include "imgui_impl_dx11.h"
+#include "imgui_impl_win32.h"
 #include "Vertex.h"
 
 Renderer::Renderer(HWND const windowHandle)
+    : windowHandle(windowHandle)
 {
-    CreateDeviceAndSwapChain(windowHandle);
+    CreateDeviceAndSwapChain();
     CreateRenderTargetView();
     CreateRasterizerState();
     CreateShaders();
+    InitializeImGui();
 }
 
 Renderer::~Renderer() noexcept
@@ -21,6 +26,10 @@ Renderer::~Renderer() noexcept
         deviceContext->ClearState();
         deviceContext->Flush();
     }
+
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
 
     vertexBuffer.Reset();
     inputLayout.Reset();
@@ -35,31 +44,14 @@ Renderer::~Renderer() noexcept
 
 void Renderer::Render()
 {
-    std::array constexpr clearColor = { 0.0f, 0.0f, 0.2f, 1.0f };
-
-    deviceContext->ClearRenderTargetView(renderTargetView.Get(),clearColor.data());
-
-    deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    deviceContext->RSSetViewports(1,&viewport);
-    deviceContext->RSSetState(rasterizerState.Get());
-
-    deviceContext->OMSetRenderTargets(1, renderTargetView.GetAddressOf(), nullptr);
-    deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-
-    deviceContext->VSSetShader(vertexShader.Get(), nullptr, 0);
-    deviceContext->PSSetShader(pixelShader.Get(), nullptr, 0);
-    deviceContext->IASetInputLayout(inputLayout.Get());
-
-    UINT constexpr stride = sizeof(Vertex);
-    UINT constexpr offset = 0;
-
-    deviceContext->IASetVertexBuffers(0, 1, vertexBuffer.GetAddressOf(), &stride, &offset);
+    PrepareFrame();
 
     deviceContext->Draw(vertexCount, 0);
 
+    DrawDebugUi();
+
     ThrowIfFailed(
-        swapChain->Present(1, 0),
+        swapChain->Present(vSyncEnabled ? 1 : 0, 0),
         "IDXGISwapChain::Present failed"
     );
 }
@@ -88,7 +80,7 @@ void Renderer::SetVertices(std::span<Vertex const> const vertices)
     );
 }
 
-void Renderer::CreateDeviceAndSwapChain(HWND const windowHandle)
+void Renderer::CreateDeviceAndSwapChain()
 {
     std::array constexpr featureLevels = { D3D_FEATURE_LEVEL_11_0 };
 
@@ -271,4 +263,53 @@ void Renderer::CreateShaders()
         ),
         "ID3D11Device::CreateInputLayout failed"
     );
+}
+
+void Renderer::InitializeImGui()
+{
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui_ImplWin32_Init(windowHandle);
+    ImGui_ImplDX11_Init(device.Get(), deviceContext.Get());
+}
+
+void Renderer::PrepareFrame()
+{
+    deviceContext->ClearRenderTargetView(renderTargetView.Get(), clearColor);
+
+    deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    deviceContext->RSSetViewports(1,&viewport);
+    deviceContext->RSSetState(rasterizerState.Get());
+
+    deviceContext->OMSetRenderTargets(1, renderTargetView.GetAddressOf(), nullptr);
+    deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+
+    deviceContext->VSSetShader(vertexShader.Get(), nullptr, 0);
+    deviceContext->PSSetShader(pixelShader.Get(), nullptr, 0);
+    deviceContext->IASetInputLayout(inputLayout.Get());
+
+    UINT constexpr stride = sizeof(Vertex);
+    UINT constexpr offset = 0;
+
+    deviceContext->IASetVertexBuffers(0, 1, vertexBuffer.GetAddressOf(), &stride, &offset);
+}
+
+void Renderer::DrawDebugUi()
+{
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+
+    ImGuiIO const& io = ImGui::GetIO();
+
+    ImGui::Begin("Renderer");
+    ImGui::Text("FPS: %.1f", io.Framerate);
+    ImGui::Text("Frame Time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
+    ImGui::ColorEdit4("Clear Color", clearColor);
+    ImGui::Checkbox("VSync", &vSyncEnabled);
+    ImGui::End();
+
+    ImGui::Render();
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }

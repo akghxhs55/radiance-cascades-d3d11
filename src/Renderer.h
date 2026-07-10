@@ -20,12 +20,18 @@ public:
     void SetVertices(std::span<Vertex const> vertices);
 
 private:
-    void CreateDeviceAndSwapChain(HWND windowHandle);
+    void CreateDeviceAndSwapChain();
     void CreateRenderTargetView();
     void CreateRasterizerState();
     void CreateShaders();
+    void InitializeImGui();
+
+    void PrepareFrame();
+    void DrawDebugUi();
 
 private:
+    HWND const windowHandle;
+
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> deviceContext;
     Microsoft::WRL::ComPtr<IDXGISwapChain> swapChain;
@@ -39,4 +45,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
     UINT vertexCount = 0;
+
+    float clearColor[4] = { 0.0f, 0.0f, 0.2f, 1.0f };
+    bool vSyncEnabled = true;
 };

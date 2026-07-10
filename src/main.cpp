@@ -1,6 +1,7 @@
 ﻿#include <array>
 #include <optional>
 #include <Windows.h>
+#include <imgui_impl_win32.h>
 
 #include "Renderer.h"
 #include "Vertex.h"
@@ -73,8 +74,15 @@ int WINAPI WinMain(
     return Run(hInstance, nShowCmd);
 }
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 LRESULT CALLBACK WndProc(HWND const windowHandle, UINT const message, WPARAM const wParam, LPARAM const lParam)
 {
+    if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam))
+    {
+        return true;
+    }
+
     switch (message)
     {
         case WM_DESTROY:
