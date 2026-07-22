@@ -4,24 +4,16 @@
 #include <imgui_impl_win32.h>
 
 #include "Renderer.h"
-#include "Scene.h"
-#include "Vertex.h"
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 std::optional<WPARAM> ProcessWindowMessages();
-
-std::array constexpr FullscreenTriangleVertices = {
-    Vertex{ .position = { -1.0f, -1.0f, 0.0f }, .uv = { 0.0f, 1.0f } },
-    Vertex{ .position = { -1.0f,  3.0f, 0.0f }, .uv = { 0.0f, -1.0f } },
-    Vertex{ .position = {  3.0f, -1.0f, 0.0f }, .uv = { 2.0f, 1.0f } },
-};
 
 int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
 {
     LPCWSTR constexpr WindowClass = L"RadianceCascades";
     LPCWSTR constexpr WindowTitle = L"Radiance Cascades";
 
-    WNDCLASSW const wndClass = {
+    WNDCLASSW const wndClass{
         .lpfnWndProc = WndProc,
         .hInstance = instanceHandle,
         .lpszClassName = WindowClass,
@@ -40,7 +32,6 @@ int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
     UpdateWindow(hWnd);
 
     Renderer renderer(hWnd);
-    renderer.SetVertices(FullscreenTriangleVertices);
 
     while (true)
     {
@@ -92,7 +83,7 @@ LRESULT CALLBACK WndProc(HWND const windowHandle, UINT const message, WPARAM con
 
 std::optional<WPARAM> ProcessWindowMessages()
 {
-    MSG message = {};
+    MSG message{};
     while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE))
     {
         if (message.message == WM_QUIT)

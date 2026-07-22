@@ -23,31 +23,33 @@ struct Scene
     std::span<Box const> boxes;
 };
 
+// Screen-space scene data for a 1024 x 1024 render area.
+// The origin is at the top-left, with +X pointing right and +Y pointing down.
 inline constexpr std::array SampleCircles = {
     Circle {
-        .center = { -0.65f, 0.20f },
-        .radius = 0.10f,
+        .center = { 179.2f, 409.6f },
+        .radius = 51.2f,
         .emission = { 12.0f, 5.0f, 1.0f },
     },
     Circle {
-        .center = { 0.60f, 0.58f },
-        .radius = 0.06f,
+        .center = { 819.2f, 215.04f },
+        .radius = 30.72f,
         .emission = { 0.5f, 3.0f, 12.0f },
     },
 };
 
 inline constexpr std::array SampleBoxes = {
     Box {
-        .center = { -0.08f, 0.08f },
-        .halfExtent = { 0.06f, 0.58f },
+        .center = { 471.04f, 471.04f },
+        .halfExtent = { 30.72f, 296.96f },
     },
     Box {
-        .center = { -0.48f, -0.48f },
-        .halfExtent = { 0.28f, 0.05f },
+        .center = { 266.24f, 757.76f },
+        .halfExtent = { 143.36f, 25.6f },
     },
     Box {
-        .center = { 0.42f, 0.12f },
-        .halfExtent = { 0.05f, 0.25f },
+        .center = { 727.04f, 450.56f },
+        .halfExtent = { 25.6f, 128.0f },
     },
 };
 

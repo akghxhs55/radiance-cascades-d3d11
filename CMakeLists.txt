@@ -34,8 +34,17 @@ target_link_libraries(RadianceCascades PRIVATE
         dwmapi
 )
 
-add_custom_command(TARGET RadianceCascades POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/shaders
-        $<TARGET_FILE_DIR:RadianceCascades>/shaders
+file(GLOB_RECURSE ShaderFiles CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*"
 )
+
+add_custom_target(CopyShaders ALL
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+        "$<TARGET_FILE_DIR:RadianceCascades>/shaders"
+        DEPENDS ${ShaderFiles}
+        COMMENT "Copying shader files"
+        VERBATIM
+)
+
+add_dependencies(RadianceCascades CopyShaders)
