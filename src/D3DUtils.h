@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <d3dcommon.h>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -29,4 +31,18 @@ inline void ThrowIfFailed(HRESULT const result, std::string_view const operation
     {
         throw D3DException(operation, result);
     }
+}
+
+inline void OutputBlob(ID3DBlob* const blob)
+{
+    if (blob == nullptr || blob->GetBufferSize() == 0)
+    {
+        return;
+    }
+
+    auto const* const text = static_cast<char const*>(blob->GetBufferPointer());
+    auto const size = static_cast<std::streamsize>(blob->GetBufferSize());
+
+    std::cerr.write(text, size);
+    std::cerr.flush();
 }

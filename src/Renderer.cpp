@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <d3dcompiler.h>
+#include <string>
 
 #include "D3DUtils.h"
 #include "imgui.h"
@@ -52,6 +53,36 @@ namespace
     {
         return static_cast<UINT>(std::floor(sceneSize / static_cast<float>(probeSpacing) + 0.5f)) + 2;
     }
+
+    [[nodiscard]]
+    Microsoft::WRL::ComPtr<ID3DBlob> CompileShader(
+        wchar_t const* const filePath,
+        char const* const entryPoint,
+        char const* const target)
+    {
+        Microsoft::WRL::ComPtr<ID3DBlob> shaderBlob;
+        Microsoft::WRL::ComPtr<ID3DBlob> errorBlob;
+
+        HRESULT const result = D3DCompileFromFile(
+            filePath,
+            nullptr,
+            D3D_COMPILE_STANDARD_FILE_INCLUDE,
+            entryPoint,
+            target,
+            0,
+            0,
+            shaderBlob.ReleaseAndGetAddressOf(),
+            errorBlob.ReleaseAndGetAddressOf()
+        );
+
+        OutputBlob(errorBlob.Get());
+
+        std::string operation = "D3DCompileFromFile failed for entry point ";
+        operation += entryPoint;
+        ThrowIfFailed(result, operation);
+
+        return shaderBlob;
+    }
 }
 
 Renderer::Renderer(HWND const windowHandle)
@@ -85,7 +116,7 @@ Renderer::~Renderer() noexcept
     cascadeConstantBuffer.Reset();
     sceneConstantBuffer.Reset();
     cascadePixelShader.Reset();
-    cascadeVertexShader.Reset();
+    fullscreenVertexShader.Reset();
     rasterizerState.Reset();
     renderTargetView.Reset();
     swapChain.Reset();
@@ -96,7 +127,6 @@ Renderer::~Renderer() noexcept
 void Renderer::Render(Scene const& scene)
 {
     UpdateSceneConstantBuffer(scene);
-    PrepareFrame();
 
     RenderRadianceCascades();
     RenderFinalImage();
@@ -209,50 +239,29 @@ void Renderer::CreateRasterizerState()
 
 void Renderer::CreateShaders()
 {
-    Microsoft::WRL::ComPtr<ID3DBlob> cascadeVertexShaderBlob;
-    ThrowIfFailed(
-        D3DCompileFromFile(
-            L"shaders/Cascade.hlsl", nullptr, nullptr, "VSMain", "vs_5_0", 0, 0,
-            cascadeVertexShaderBlob.ReleaseAndGetAddressOf(), nullptr
-        ),
-        "D3DCompileFromFile failed"
-    );
+    Microsoft::WRL::ComPtr<ID3DBlob> shaderBlob = CompileShader(L"shaders/FullScreen.hlsl", "VSMain", "vs_5_0");
     ThrowIfFailed(
         device->CreateVertexShader(
-            cascadeVertexShaderBlob->GetBufferPointer(), cascadeVertexShaderBlob->GetBufferSize(), nullptr,
-            cascadeVertexShader.ReleaseAndGetAddressOf()
+            shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr,
+            fullscreenVertexShader.ReleaseAndGetAddressOf()
         ),
         "ID3D11Device::CreateVertexShader failed"
     );
 
-    Microsoft::WRL::ComPtr<ID3DBlob> cascadePixelShaderBlob;
-    ThrowIfFailed(
-        D3DCompileFromFile(
-            L"shaders/Cascade.hlsl", nullptr, nullptr, "PSMain", "ps_5_0", 0, 0,
-            cascadePixelShaderBlob.ReleaseAndGetAddressOf(), nullptr
-        ),
-        "D3DCompileFromFile failed"
-    );
+    shaderBlob = CompileShader(L"shaders/Cascade.hlsl", "PSCascade", "ps_5_0");
     ThrowIfFailed(
         device->CreatePixelShader(
-            cascadePixelShaderBlob->GetBufferPointer(), cascadePixelShaderBlob->GetBufferSize(), nullptr,
+            shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr,
             cascadePixelShader.ReleaseAndGetAddressOf()
         ),
         "ID3D11Device::CreatePixelShader failed"
     );
 
-    Microsoft::WRL::ComPtr<ID3DBlob> debugCascadePixelShaderBlob;
-    ThrowIfFailed(
-        D3DCompileFromFile(
-            L"shaders/Cascade.hlsl", nullptr, nullptr, "PSDebugCascade", "ps_5_0", 0, 0,
-            debugCascadePixelShaderBlob.ReleaseAndGetAddressOf(), nullptr
-        ),
-        "D3DCompileFromFile failed"
-    );
+    shaderBlob = CompileShader(L"shaders/FinalGather.hlsl", "PSFinalGather", "ps_5_0");
     ThrowIfFailed(
         device->CreatePixelShader(
-            debugCascadePixelShaderBlob->GetBufferPointer(), debugCascadePixelShaderBlob->GetBufferSize(), nullptr,
-            debugCascadePixelShader.ReleaseAndGetAddressOf()
+            shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr,
+            finalGatherPixelShader.ReleaseAndGetAddressOf()
         ),
         "ID3D11Device::CreatePixelShader failed"
     );
@@ -352,29 +361,16 @@ void Renderer::UpdateSceneConstantBuffer(Scene const& scene)
     deviceContext->UpdateSubresource(sceneConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
 }
 
-void Renderer::PrepareFrame()
-{
-    deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    deviceContext->VSSetShader(cascadeVertexShader.Get(), nullptr, 0);
-
-    deviceContext->PSSetShader(cascadePixelShader.Get(), nullptr, 0);
-    deviceContext->PSSetConstantBuffers(0, 1, sceneConstantBuffer.GetAddressOf());
-
-    deviceContext->RSSetViewports(1, &viewport);
-    deviceContext->RSSetState(rasterizerState.Get());
-
-    deviceContext->OMSetRenderTargets(1, renderTargetView.GetAddressOf(), nullptr);
-    deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-}
-
 void Renderer::RenderRadianceCascades()
 {
     deviceContext->IASetInputLayout(nullptr);
     deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    deviceContext->VSSetShader(cascadeVertexShader.Get(), nullptr, 0);
+    deviceContext->VSSetShader(fullscreenVertexShader.Get(), nullptr, 0);
     deviceContext->PSSetShader(cascadePixelShader.Get(), nullptr, 0);
+
+    deviceContext->RSSetState(rasterizerState.Get());
+    deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 
     ID3D11Buffer* const constantBuffers[] = {
         sceneConstantBuffer.Get(),
@@ -401,8 +397,6 @@ void Renderer::RenderCascade(UINT const cascadeIndex)
     ID3D11ShaderResourceView* const nullSRV = nullptr;
     deviceContext->PSSetShaderResources(0, 1, &nullSRV);
 
-    deviceContext->OMSetRenderTargets(1, current.renderTargetView.GetAddressOf(), nullptr);
-
     D3D11_VIEWPORT const cascadeViewport{
         .TopLeftX = 0.0f,
         .TopLeftY = 0.0f,
@@ -413,15 +407,15 @@ void Renderer::RenderCascade(UINT const cascadeIndex)
     };
 
     deviceContext->RSSetViewports(1, &cascadeViewport);
+    deviceContext->OMSetRenderTargets(1, current.renderTargetView.GetAddressOf(), nullptr);
 
     const CascadeConstants constants = BuildCascadeConstants(cascadeIndex);
-
     deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
 
     if (cascadeIndex + 1 < cascadeCount)
     {
-        CascadeResource& previous = cascadeResources[cascadeIndex + 1];
-        deviceContext->PSSetShaderResources(0, 1, previous.shaderResourceView.GetAddressOf());
+        CascadeResource& upperCascade = cascadeResources[cascadeIndex + 1];
+        deviceContext->PSSetShaderResources(0, 1, upperCascade.shaderResourceView.GetAddressOf());
     }
     else
     {
@@ -432,21 +426,30 @@ void Renderer::RenderCascade(UINT const cascadeIndex)
 
     ID3D11RenderTargetView* const nullRTV = nullptr;
     deviceContext->OMSetRenderTargets(1, &nullRTV, nullptr);
-
     deviceContext->PSSetShaderResources(0, 1, &nullSRV);
 }
 
 void Renderer::RenderFinalImage()
 {
-    deviceContext->OMSetRenderTargets(1, renderTargetView.GetAddressOf(), nullptr);
+    deviceContext->IASetInputLayout(nullptr);
+    deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    deviceContext->VSSetShader(fullscreenVertexShader.Get(), nullptr, 0);
+    deviceContext->PSSetShader(finalGatherPixelShader.Get(), nullptr, 0);
+
+    CascadeConstants const constants = BuildCascadeConstants(0);
+    deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
+
+    ID3D11Buffer* const constantBuffers[] = { cascadeConstantBuffer.Get() };
+    deviceContext->PSSetConstantBuffers(1, 1, constantBuffers);
+    deviceContext->PSSetShaderResources(0, 1, cascadeResources[0].shaderResourceView.GetAddressOf());
+
     deviceContext->RSSetViewports(1, &viewport);
+    deviceContext->RSSetState(rasterizerState.Get());
 
-    deviceContext->VSSetShader(cascadeVertexShader.Get(), nullptr, 0);
-    deviceContext->PSSetShader(debugCascadePixelShader.Get(), nullptr, 0);
+    deviceContext->OMSetRenderTargets(1, renderTargetView.GetAddressOf(), nullptr);
+    deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 
-    ID3D11ShaderResourceView* const cascade0 = cascadeResources[0].shaderResourceView.Get();
-
-    deviceContext->PSSetShaderResources(0, 1, &cascade0);
     deviceContext->Draw(3, 0);
 
     ID3D11ShaderResourceView* const nullSRV = nullptr;

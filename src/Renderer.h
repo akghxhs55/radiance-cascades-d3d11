@@ -31,7 +31,6 @@ private:
     void InitializeImGui();
 
     void UpdateSceneConstantBuffer(Scene const& scene);
-    void PrepareFrame();
     void RenderRadianceCascades();
     void RenderCascade(UINT cascadeIndex);
     void RenderFinalImage();
@@ -53,9 +52,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTargetView;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerState;
 
-    Microsoft::WRL::ComPtr<ID3D11VertexShader> cascadeVertexShader;
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> fullscreenVertexShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> cascadePixelShader;
-    Microsoft::WRL::ComPtr<ID3D11PixelShader> debugCascadePixelShader;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> finalGatherPixelShader;
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> sceneConstantBuffer;
     Microsoft::WRL::ComPtr<ID3D11Buffer> cascadeConstantBuffer;

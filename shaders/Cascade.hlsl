@@ -22,51 +22,9 @@ cbuffer SceneConstants : register(b0)
     uint2 ScenePadding;
 };
 
-cbuffer CascadeConstants : register(b1)
-{
-    uint CascadeIndex;
-    uint CascadeCount;
-
-    uint ProbeCountX;
-    uint ProbeCountY;
-    float ProbeSpacing;
-    float ProbeOffset;
-
-    uint RaysPerProbe;
-    float IntervalStart;
-    float IntervalEnd;
-
-    float2 RadianceTextureSize;
-
-    uint UpperProbeCountX;
-    uint UpperProbeCountY;
-
-    uint3 CascadePadding;
-};
+#include "CascadeConstants.hlsli"
 
 Texture2D<float4> UpperCascade : register(t0);
-
-static const float2 FullScreenPositions[3] =
-{
-    float2(-1.0, -1.0),
-    float2(-1.0, 3.0),
-    float2(3.0, -1.0),
-};
-
-struct PSInput
-{
-    float4 position : SV_Position;
-    float2 uv : TEXCOORD0;
-};
-
-PSInput VSMain(uint vertexId : SV_VertexID)
-{
-    PSInput output;
-    output.position = float4(FullScreenPositions[vertexId], 0.0, 1.0);
-    output.uv = FullScreenPositions[vertexId] * float2(0.5, -0.5) + 0.5;
-
-    return output;
-}
 
 float SignedDistanceToBox(float2 position, float4 boxData)
 {
@@ -203,7 +161,13 @@ float4 SampleUpperCascade(float2 probePosition, uint currentRayIndex)
     return lerp(upperRow, lowerRow, interpolation.y);
 }
 
-float4 PSMain(PSInput input) : SV_Target
+struct PSInput
+{
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+float4 PSCascade(PSInput input) : SV_Target
 {
     uint2 texelCoord = uint2(input.position.xy);
     uint linearIndex = texelCoord.y * uint(RadianceTextureSize.x) + texelCoord.x;
@@ -233,21 +197,4 @@ float4 PSMain(PSInput input) : SV_Target
     }
 
     return localResult;
-}
-
-float4 PSDebugCascade(PSInput input) : SV_Target
-{
-	uint width;
-	uint height;
-	UpperCascade.GetDimensions(width, height);
-
-	uint2 texel = min(
-		uint2(saturate(input.uv) * float2(width, height)),
-		uint2(width - 1, height - 1)
-	);
-
-    float4 sample = UpperCascade.Load(int3(texel, 0));
-
-    float3 color = 1.0 - exp(-sample.rgb * 0.25);
-    return float4(color, 1.0);
 }
