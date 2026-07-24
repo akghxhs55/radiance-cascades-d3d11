@@ -69,6 +69,7 @@ private:
         UINT height;
     };
 
+    [[nodiscard]]
     CascadeResource CreateCascadeResource(UINT width, UINT height);
 
     std::vector<CascadeResource> cascadeResources;
@@ -96,6 +97,7 @@ private:
     };
     static_assert(sizeof(CascadeConstants) % 16 == 0);
 
+    [[nodiscard]]
     CascadeConstants BuildCascadeConstants(UINT cascadeIndex) const;
 
 };

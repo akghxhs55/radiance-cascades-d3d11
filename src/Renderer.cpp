@@ -49,6 +49,7 @@ namespace
     };
     static_assert(sizeof(SceneConstants) % 16 == 0);
 
+    [[nodiscard]]
     UINT CalculateProbeCount(float const sceneSize, UINT const probeSpacing)
     {
         return static_cast<UINT>(std::floor(sceneSize / static_cast<float>(probeSpacing) + 0.5f)) + 2;
