@@ -1,6 +1,14 @@
 #include "CascadeConstants.hlsli"
 
-Texture2D<float4> Cascade0 : register(t0);
+static const uint DisplayModeVisibility = 2;
+
+cbuffer FinalGatherConstants : register(b0)
+{
+    uint DisplayMode;
+    uint3 FinalGatherPadding;
+};
+
+Texture2D<float4> SelectedCascade : register(t0);
 
 float4 LoadCascadeRay(int2 probeCoord, uint rayIndex)
 {
@@ -9,23 +17,23 @@ float4 LoadCascadeRay(int2 probeCoord, uint rayIndex)
     uint textureWidth = uint(RadianceTextureSize.x);
     uint2 texelCoord = uint2(linearIndex % textureWidth, linearIndex / textureWidth);
 
-    return Cascade0.Load(int3(texelCoord, 0));
+    return SelectedCascade.Load(int3(texelCoord, 0));
 }
 
-float3 GatherProbeRadiance(uint2 probeCoord)
+float4 GatherProbe(uint2 probeCoord)
 {
-    float3 radiance = 0.0;
+    float4 result = 0.0;
 
     [loop]
     for (uint rayIndex = 0; rayIndex < RaysPerProbe; ++rayIndex)
     {
-        radiance += LoadCascadeRay(probeCoord, rayIndex).rgb;
+        result += LoadCascadeRay(probeCoord, rayIndex);
     }
 
-    return radiance / float(RaysPerProbe);
+    return result / float(RaysPerProbe);
 }
 
-float3 GatherCascadeAtPosition(float2 scenePosition)
+float4 GatherCascadeAtPosition(float2 scenePosition)
 {
     float2 gridPosition = (scenePosition - ProbeOffset) / ProbeSpacing;
 
@@ -39,13 +47,13 @@ float3 GatherCascadeAtPosition(float2 scenePosition)
     uint2 probe01 = uint2(clamp(lowerProbe + int2(0, 1), int2(0, 0), probeLimit));
     uint2 probe11 = uint2(clamp(lowerProbe + int2(1, 1), int2(0, 0), probeLimit));
 
-    float3 radiance00 = GatherProbeRadiance(probe00);
-    float3 radiance10 = GatherProbeRadiance(probe10);
-    float3 radiance01 = GatherProbeRadiance(probe01);
-    float3 radiance11 = GatherProbeRadiance(probe11);
+    float4 result00 = GatherProbe(probe00);
+    float4 result10 = GatherProbe(probe10);
+    float4 result01 = GatherProbe(probe01);
+    float4 result11 = GatherProbe(probe11);
 
-    float3 upperRow = lerp(radiance00, radiance10, interpolation.x);
-    float3 lowerRow = lerp(radiance01, radiance11, interpolation.x);
+    float4 upperRow = lerp(result00, result10, interpolation.x);
+    float4 lowerRow = lerp(result01, result11, interpolation.x);
 
     return lerp(upperRow, lowerRow, interpolation.y);
 }
@@ -60,12 +68,17 @@ float4 PSFinalGather(PSInput input) : SV_Target
 {
     float2 scenePosition = input.position.xy;
 
-    float3 radiance = GatherCascadeAtPosition(scenePosition);
+    float4 result = GatherCascadeAtPosition(scenePosition);
+
+    if (DisplayMode == DisplayModeVisibility)
+    {
+        return float4(result.aaa, 1.0);
+    }
 
     float exposure = 0.25;
 
     float3 inverseGamma = 1.0 / 2.2;
-    float3 color = 1.0 - exp(-radiance * exposure);
+    float3 color = 1.0 - exp(-result.rgb * exposure);
     color = pow(saturate(color), inverseGamma);
 
     return float4(color, 1.0);
@@ -75,14 +88,14 @@ float4 PSDebugCascade(PSInput input) : SV_Target
 {
 	uint width;
 	uint height;
-	Cascade0.GetDimensions(width, height);
+	SelectedCascade.GetDimensions(width, height);
 
 	uint2 texel = min(
 		uint2(saturate(input.uv) * float2(width, height)),
 		uint2(width - 1, height - 1)
 	);
 
-    float4 sample = Cascade0.Load(int3(texel, 0));
+    float4 sample = SelectedCascade.Load(int3(texel, 0));
 
     float3 color = 1.0 - exp(-sample.rgb * 0.25);
     return float4(color, 1.0);

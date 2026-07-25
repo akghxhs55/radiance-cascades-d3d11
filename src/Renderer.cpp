@@ -1,9 +1,11 @@
 #include "Renderer.h"
 
-#include <array>
-#include <cmath>
 #include <d3dcompiler.h>
+
+#include <array>
+#include <algorithm>
 #include <string>
+#include <cmath>
 
 #include "D3DUtils.h"
 #include "imgui.h"
@@ -48,6 +50,13 @@ namespace
         std::array<uint32_t, 2> padding = {};
     };
     static_assert(sizeof(SceneConstants) % 16 == 0);
+
+    struct FinalGatherConstants
+    {
+        uint32_t displayMode;
+        std::array<uint32_t, 3> padding;
+    };
+    static_assert(sizeof(FinalGatherConstants) % 16 == 0);
 
     [[nodiscard]]
     UINT CalculateProbeCount(float const sceneSize, UINT const probeSpacing)
@@ -96,6 +105,7 @@ Renderer::Renderer(HWND const windowHandle)
 
     CreateSceneConstantBuffer();
     CreateCascadeConstantBuffer();
+    CreateFinalGatherConstantBuffer();
     CreateCascadeResources();
 
     InitializeImGui();
@@ -114,6 +124,7 @@ Renderer::~Renderer() noexcept
     ImGui::DestroyContext();
 
     cascadeResources.clear();
+    finalGatherConstantBuffer.Reset();
     cascadeConstantBuffer.Reset();
     sceneConstantBuffer.Reset();
     cascadePixelShader.Reset();
@@ -296,6 +307,20 @@ void Renderer::CreateCascadeConstantBuffer()
     );
 }
 
+void Renderer::CreateFinalGatherConstantBuffer()
+{
+    D3D11_BUFFER_DESC constexpr bufferDesc{
+        .ByteWidth = static_cast<UINT>(sizeof(FinalGatherConstants)),
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
+    };
+
+    ThrowIfFailed(
+        device->CreateBuffer(&bufferDesc, nullptr, finalGatherConstantBuffer.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateBuffer for final gather constants failed"
+    );
+}
+
 void Renderer::CreateCascadeResources()
 {
     cascadeResources.clear();
@@ -384,6 +409,12 @@ void Renderer::RenderRadianceCascades()
         RenderCascade(cascadeIndex);
     }
 
+    if (displayMode == 1)
+    {
+        UINT const localCascadeIndex = static_cast<UINT>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1));
+        RenderCascade(localCascadeIndex, false);
+    }
+
     ID3D11ShaderResourceView* const nullSRV = nullptr;
     deviceContext->PSSetShaderResources(0, 1, &nullSRV);
 
@@ -391,7 +422,7 @@ void Renderer::RenderRadianceCascades()
     deviceContext->OMSetRenderTargets(1, &nullRTV, nullptr);
 }
 
-void Renderer::RenderCascade(UINT const cascadeIndex)
+void Renderer::RenderCascade(UINT const cascadeIndex, bool const mergeUpperCascade)
 {
     CascadeResource& current = cascadeResources[cascadeIndex];
 
@@ -410,10 +441,10 @@ void Renderer::RenderCascade(UINT const cascadeIndex)
     deviceContext->RSSetViewports(1, &cascadeViewport);
     deviceContext->OMSetRenderTargets(1, current.renderTargetView.GetAddressOf(), nullptr);
 
-    const CascadeConstants constants = BuildCascadeConstants(cascadeIndex);
+    CascadeConstants const constants = BuildCascadeConstants(cascadeIndex, mergeUpperCascade);
     deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
 
-    if (cascadeIndex + 1 < cascadeCount)
+    if (mergeUpperCascade && cascadeIndex + 1 < cascadeCount)
     {
         CascadeResource& upperCascade = cascadeResources[cascadeIndex + 1];
         deviceContext->PSSetShaderResources(0, 1, upperCascade.shaderResourceView.GetAddressOf());
@@ -438,12 +469,28 @@ void Renderer::RenderFinalImage()
     deviceContext->VSSetShader(fullscreenVertexShader.Get(), nullptr, 0);
     deviceContext->PSSetShader(finalGatherPixelShader.Get(), nullptr, 0);
 
-    CascadeConstants const constants = BuildCascadeConstants(0);
-    deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
+    UINT const selectedCascadeIndex = displayMode == 1
+        ? static_cast<UINT>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1))
+        : 0;
 
-    ID3D11Buffer* const constantBuffers[] = { cascadeConstantBuffer.Get() };
-    deviceContext->PSSetConstantBuffers(1, 1, constantBuffers);
-    deviceContext->PSSetShaderResources(0, 1, cascadeResources[0].shaderResourceView.GetAddressOf());
+    CascadeConstants const cascadeConstants = BuildCascadeConstants(selectedCascadeIndex);
+    deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &cascadeConstants, 0, 0);
+
+    FinalGatherConstants const finalGatherConstants{
+        .displayMode = static_cast<uint32_t>(displayMode),
+    };
+    deviceContext->UpdateSubresource(finalGatherConstantBuffer.Get(), 0, nullptr, &finalGatherConstants, 0, 0);
+
+    ID3D11Buffer* const constantBuffers[] = {
+        finalGatherConstantBuffer.Get(),
+        cascadeConstantBuffer.Get(),
+    };
+    deviceContext->PSSetConstantBuffers(0, 2, constantBuffers);
+    deviceContext->PSSetShaderResources(
+        0,
+        1,
+        cascadeResources[selectedCascadeIndex].shaderResourceView.GetAddressOf()
+    );
 
     deviceContext->RSSetViewports(1, &viewport);
     deviceContext->RSSetState(rasterizerState.Get());
@@ -470,6 +517,22 @@ void Renderer::DrawDebugUi()
     ImGui::Text("FPS: %.1f", io.Framerate);
     ImGui::Text("Frame Time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
     ImGui::Checkbox("VSync", &vSyncEnabled);
+
+    constexpr char const* displayModes[] = {
+        "Final Image",
+        "Selected Cascade",
+        "Visibility",
+    };
+    ImGui::Combo("Display Mode", &displayMode, displayModes, IM_ARRAYSIZE(displayModes));
+
+    if (displayMode == 1)
+    {
+        ImGui::SliderInt("Cascade", &debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1);
+    }
+    if (displayMode == 2)
+    {
+        ImGui::TextUnformatted("White: visible, Black: occluded");
+    }
 
     bool cascadeLayoutChanged = false;
     cascadeLayoutChanged |= ImGui::SliderInt("Cascade Count", reinterpret_cast<int*>(&cascadeCount), 1, 8);
@@ -525,7 +588,7 @@ Renderer::CascadeResource Renderer::CreateCascadeResource(UINT const width, UINT
     return resource;
 }
 
-Renderer::CascadeConstants Renderer::BuildCascadeConstants(UINT const cascadeIndex) const
+Renderer::CascadeConstants Renderer::BuildCascadeConstants(UINT const cascadeIndex, bool const mergeUpperCascade) const
 {
     uint32_t const scale = 1u << cascadeIndex;
     uint32_t const upperScale = scale * 2;
@@ -550,5 +613,6 @@ Renderer::CascadeConstants Renderer::BuildCascadeConstants(UINT const cascadeInd
         .upperProbeCountY = cascadeIndex + 1 < cascadeCount
             ? static_cast<uint32_t>(std::floor(viewport.Height / static_cast<float>(baseProbeSpacing * upperScale) + 0.5f) + 2)
             : 0,
+        .mergeUpperCascade = mergeUpperCascade ? 1u : 0u,
     };
 }

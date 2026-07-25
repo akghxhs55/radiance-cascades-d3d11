@@ -27,12 +27,13 @@ private:
     void CreateShaders();
     void CreateSceneConstantBuffer();
     void CreateCascadeConstantBuffer();
+    void CreateFinalGatherConstantBuffer();
     void CreateCascadeResources();
     void InitializeImGui();
 
     void UpdateSceneConstantBuffer(Scene const& scene);
     void RenderRadianceCascades();
-    void RenderCascade(UINT cascadeIndex);
+    void RenderCascade(UINT cascadeIndex, bool mergeUpperCascade = true);
     void RenderFinalImage();
     void DrawDebugUi();
 
@@ -44,6 +45,8 @@ private:
     UINT baseProbeSpacing = 1;
     UINT baseRaysPerProbe = 8;
     float baseIntervalLength = 8.0f;
+    int displayMode = 0;
+    int debugCascadeIndex = 0;
 
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> deviceContext;
@@ -58,6 +61,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> sceneConstantBuffer;
     Microsoft::WRL::ComPtr<ID3D11Buffer> cascadeConstantBuffer;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> finalGatherConstantBuffer;
 
     struct CascadeResource
     {
@@ -93,11 +97,13 @@ private:
         uint32_t upperProbeCountX;
         uint32_t upperProbeCountY;
 
-        std::array<uint32_t, 3> padding;
+        uint32_t mergeUpperCascade;
+        
+        std::array<uint32_t, 2> padding;
     };
     static_assert(sizeof(CascadeConstants) % 16 == 0);
 
     [[nodiscard]]
-    CascadeConstants BuildCascadeConstants(UINT cascadeIndex) const;
+    CascadeConstants BuildCascadeConstants(UINT cascadeIndex, bool mergeUpperCascade = true) const;
 
 };

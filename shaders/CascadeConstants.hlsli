@@ -17,5 +17,6 @@ cbuffer CascadeConstants : register(b1)
     uint UpperProbeCountX;
     uint UpperProbeCountY;
 
-    uint3 CascadePadding;
+    uint MergeUpperCascade;
+    uint2 CascadePadding;
 };

@@ -189,7 +189,7 @@ float4 PSCascade(PSInput input) : SV_Target
 
     float4 localResult = RayMarchInterval(probePosition, rayDirection, IntervalStart, IntervalEnd);
 
-    if (CascadeIndex + 1 < CascadeCount && localResult.a > 0.001)
+    if (MergeUpperCascade != 0 && CascadeIndex + 1 < CascadeCount && localResult.a > 0.001)
     {
         float4 upperResult = SampleUpperCascade(probePosition, rayIndex);
         localResult.rgb += localResult.a * upperResult.rgb;
