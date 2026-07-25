@@ -41,8 +41,8 @@ private:
 
     bool vSyncEnabled = true;
     UINT cascadeCount = 5;
-    UINT baseProbeSpacing = 4;
-    UINT baseRaysPerProbe = 4;
+    UINT baseProbeSpacing = 1;
+    UINT baseRaysPerProbe = 8;
     float baseIntervalLength = 8.0f;
 
     Microsoft::WRL::ComPtr<ID3D11Device> device;

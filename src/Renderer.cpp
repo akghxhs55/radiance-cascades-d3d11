@@ -466,9 +466,22 @@ void Renderer::DrawDebugUi()
     ImGuiIO const& io = ImGui::GetIO();
 
     ImGui::Begin("Renderer");
+
     ImGui::Text("FPS: %.1f", io.Framerate);
     ImGui::Text("Frame Time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
     ImGui::Checkbox("VSync", &vSyncEnabled);
+
+    bool cascadeLayoutChanged = false;
+    cascadeLayoutChanged |= ImGui::SliderInt("Cascade Count", reinterpret_cast<int*>(&cascadeCount), 1, 8);
+    cascadeLayoutChanged |= ImGui::SliderInt("Base Probe Spacing", reinterpret_cast<int*>(&baseProbeSpacing), 1, 32);
+    cascadeLayoutChanged |= ImGui::SliderInt("Base Rays Per Probe", reinterpret_cast<int*>(&baseRaysPerProbe), 1, 32);
+    cascadeLayoutChanged |= ImGui::SliderFloat("Base Interval Length", &baseIntervalLength, 1.0f, 32.0f);
+
+    if (cascadeLayoutChanged)
+    {
+        CreateCascadeResources();
+    }
+
     ImGui::End();
 
     ImGui::Render();

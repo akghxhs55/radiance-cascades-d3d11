@@ -7,7 +7,7 @@ static const uint HitNothing = 0;
 static const uint HitCircle = 1;
 static const uint HitBox = 2;
 
-static const float HitEpsilon = 0.5;
+static const float HitEpsilon = 0.2;
 static const float Tau = 6.28318530718;
 
 cbuffer SceneConstants : register(b0)
