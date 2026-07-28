@@ -76,10 +76,8 @@ float4 PSFinalGather(PSInput input) : SV_Target
     }
 
     float exposure = 0.25;
-
-    float3 inverseGamma = 1.0 / 2.2;
+    
     float3 color = 1.0 - exp(-result.rgb * exposure);
-    color = pow(saturate(color), inverseGamma);
 
     return float4(color, 1.0);
 }
