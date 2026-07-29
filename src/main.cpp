@@ -10,8 +10,8 @@ std::optional<WPARAM> ProcessWindowMessages();
 
 int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
 {
-    LPCWSTR constexpr WindowClass = L"RadianceCascades";
-    LPCWSTR constexpr WindowTitle = L"Radiance Cascades";
+    constexpr LPCWSTR WindowClass = L"RadianceCascades";
+    constexpr LPCWSTR WindowTitle = L"Radiance Cascades";
 
     WNDCLASSW const wndClass{
         .lpfnWndProc = WndProc,

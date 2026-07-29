@@ -153,7 +153,7 @@ void Renderer::Render(Scene const& scene)
 
 void Renderer::CreateDeviceAndSwapChain()
 {
-    std::array constexpr featureLevels = { D3D_FEATURE_LEVEL_11_0 };
+    constexpr std::array featureLevels = { D3D_FEATURE_LEVEL_11_0 };
 
     DXGI_SWAP_CHAIN_DESC const swapChainDesc{
         .BufferDesc = {
@@ -218,7 +218,7 @@ void Renderer::CreateRenderTargetView()
         "IDXGISwapChain::GetBuffer failed"
     );
 
-    D3D11_RENDER_TARGET_VIEW_DESC constexpr renderTargetViewDesc{
+    constexpr D3D11_RENDER_TARGET_VIEW_DESC renderTargetViewDesc{
         .Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
         .ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
     };
@@ -235,7 +235,7 @@ void Renderer::CreateRenderTargetView()
 
 void Renderer::CreateRasterizerState()
 {
-    D3D11_RASTERIZER_DESC constexpr rasterizerDesc{
+    constexpr D3D11_RASTERIZER_DESC rasterizerDesc{
         .FillMode = D3D11_FILL_SOLID,
         .CullMode = D3D11_CULL_BACK,
     };
@@ -281,7 +281,7 @@ void Renderer::CreateShaders()
 
 void Renderer::CreateSceneConstantBuffer()
 {
-    D3D11_BUFFER_DESC constexpr bufferDesc{
+    constexpr D3D11_BUFFER_DESC bufferDesc{
         .ByteWidth = static_cast<UINT>(sizeof(SceneConstants)),
         .Usage = D3D11_USAGE_DEFAULT,
         .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
@@ -295,7 +295,7 @@ void Renderer::CreateSceneConstantBuffer()
 
 void Renderer::CreateCascadeConstantBuffer()
 {
-    D3D11_BUFFER_DESC constexpr bufferDesc{
+    constexpr D3D11_BUFFER_DESC bufferDesc{
         .ByteWidth = static_cast<UINT>(sizeof(CascadeConstants)),
         .Usage = D3D11_USAGE_DEFAULT,
         .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
@@ -309,7 +309,7 @@ void Renderer::CreateCascadeConstantBuffer()
 
 void Renderer::CreateFinalGatherConstantBuffer()
 {
-    D3D11_BUFFER_DESC constexpr bufferDesc{
+    constexpr D3D11_BUFFER_DESC bufferDesc{
         .ByteWidth = static_cast<UINT>(sizeof(FinalGatherConstants)),
         .Usage = D3D11_USAGE_DEFAULT,
         .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
