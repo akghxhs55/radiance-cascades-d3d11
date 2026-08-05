@@ -3,8 +3,9 @@
 #include <Windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
-#include <span>
+
 #include <vector>
+#include <cstdint>
 
 #include "Scene.h"
 #include "Vertex.h"
@@ -41,9 +42,9 @@ private:
     HWND const windowHandle;
 
     bool vSyncEnabled = true;
-    UINT cascadeCount = 5;
-    UINT baseProbeSpacing = 1;
-    UINT baseRaysPerProbe = 8;
+    std::uint32_t cascadeCount = 5;
+    std::uint32_t baseProbeSpacing = 1;
+    std::uint32_t baseRayExponent = 3;
     float baseIntervalLength = 8.0f;
     int displayMode = 0;
     int debugCascadeIndex = 0;
@@ -78,32 +79,23 @@ private:
 
     std::vector<CascadeResource> cascadeResources;
 
-    struct CascadeConstants
+    struct CascadePassConstants
     {
-        uint32_t cascadeIndex;
-        uint32_t cascadeCount;
+        std::uint32_t sceneWidth;
+        std::uint32_t sceneHeight;
 
-        uint32_t probeCountX;
-        uint32_t probeCountY;
-        float probeSpacing;
-        float probeOffset;
+        std::uint32_t cascadeIndex;
+        std::uint32_t cascadeCount;
 
-        uint32_t raysPerProbe;
-        float intervalStart;
-        float intervalEnd;
+        std::uint32_t baseProbeSpacing;
+        std::uint32_t baseRayExponent;
+        float baseIntervalLength;
 
-        DirectX::XMFLOAT2 radianceTextureSize;
-
-        uint32_t upperProbeCountX;
-        uint32_t upperProbeCountY;
-
-        uint32_t mergeUpperCascade;
-        
-        std::array<uint32_t, 2> padding;
+        std::uint32_t mergeUpperCascade;
     };
-    static_assert(sizeof(CascadeConstants) % 16 == 0);
+    static_assert(sizeof(CascadePassConstants) % 16 == 0);
 
     [[nodiscard]]
-    CascadeConstants BuildCascadeConstants(UINT cascadeIndex, bool mergeUpperCascade = true) const;
+    CascadePassConstants BuildCascadeConstants(UINT cascadeIndex, bool mergeUpperCascade = true) const;
 
 };

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <string>
 #include <cmath>
+#include <cstdint>
 
 #include "D3DUtils.h"
 #include "imgui.h"
@@ -45,16 +46,16 @@ namespace
         std::array<GpuCircleData, MaxCircles> circleData = {};
         std::array<GpuCircleEmission, MaxCircles> circleEmission = {};
         std::array<GpuBox, MaxBoxes> boxes = {};
-        uint32_t circleCount = 0;
-        uint32_t boxCount = 0;
-        std::array<uint32_t, 2> padding = {};
+        std::uint32_t circleCount = 0;
+        std::uint32_t boxCount = 0;
+        std::array<std::uint32_t, 2> padding = {};
     };
     static_assert(sizeof(SceneConstants) % 16 == 0);
 
     struct FinalGatherConstants
     {
-        uint32_t displayMode;
-        std::array<uint32_t, 3> padding;
+        std::uint32_t displayMode;
+        std::array<std::uint32_t, 3> padding;
     };
     static_assert(sizeof(FinalGatherConstants) % 16 == 0);
 
@@ -296,7 +297,7 @@ void Renderer::CreateSceneConstantBuffer()
 void Renderer::CreateCascadeConstantBuffer()
 {
     constexpr D3D11_BUFFER_DESC bufferDesc{
-        .ByteWidth = static_cast<UINT>(sizeof(CascadeConstants)),
+        .ByteWidth = static_cast<UINT>(sizeof(CascadePassConstants)),
         .Usage = D3D11_USAGE_DEFAULT,
         .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
     };
@@ -326,17 +327,18 @@ void Renderer::CreateCascadeResources()
     cascadeResources.clear();
     cascadeResources.reserve(cascadeCount);
 
-    for (UINT i = 0; i < cascadeCount; ++i)
+    for (UINT cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
     {
-        UINT const scale = 1u << i;
+        UINT const scale = 1u << cascadeIndex;
 
         UINT const probeCountX = CalculateProbeCount(viewport.Width, baseProbeSpacing * scale);
         UINT const probeCountY = CalculateProbeCount(viewport.Height, baseProbeSpacing * scale);
 
-        UINT const totalTexels = probeCountX * probeCountY * baseRaysPerProbe * scale * scale;
+        UINT const rayBlockWidth = 1u << (baseRayExponent / 2 + cascadeIndex);
+        UINT const rayBlockHeight = 1u << ((baseRayExponent + 1) /  2 + cascadeIndex);
 
-        UINT const width = std::min<UINT>(totalTexels, 4096u);
-        UINT const height = (totalTexels + width - 1) / width;
+        UINT const width = rayBlockWidth * probeCountX;
+        UINT const height = rayBlockHeight * probeCountY;
 
         cascadeResources.push_back(CreateCascadeResource(width, height));
     }
@@ -441,7 +443,7 @@ void Renderer::RenderCascade(UINT const cascadeIndex, bool const mergeUpperCasca
     deviceContext->RSSetViewports(1, &cascadeViewport);
     deviceContext->OMSetRenderTargets(1, current.renderTargetView.GetAddressOf(), nullptr);
 
-    CascadeConstants const constants = BuildCascadeConstants(cascadeIndex, mergeUpperCascade);
+    CascadePassConstants const constants = BuildCascadeConstants(cascadeIndex, mergeUpperCascade);
     deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
 
     if (mergeUpperCascade && cascadeIndex + 1 < cascadeCount)
@@ -473,11 +475,11 @@ void Renderer::RenderFinalImage()
         ? static_cast<UINT>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1))
         : 0;
 
-    CascadeConstants const cascadeConstants = BuildCascadeConstants(selectedCascadeIndex);
+    CascadePassConstants const cascadeConstants = BuildCascadeConstants(selectedCascadeIndex);
     deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &cascadeConstants, 0, 0);
 
     FinalGatherConstants const finalGatherConstants{
-        .displayMode = static_cast<uint32_t>(displayMode),
+        .displayMode = static_cast<std::uint32_t>(displayMode),
     };
     deviceContext->UpdateSubresource(finalGatherConstantBuffer.Get(), 0, nullptr, &finalGatherConstants, 0, 0);
 
@@ -537,8 +539,8 @@ void Renderer::DrawDebugUi()
     bool cascadeLayoutChanged = false;
     cascadeLayoutChanged |= ImGui::SliderInt("Cascade Count", reinterpret_cast<int*>(&cascadeCount), 1, 8);
     cascadeLayoutChanged |= ImGui::SliderInt("Base Probe Spacing", reinterpret_cast<int*>(&baseProbeSpacing), 1, 32);
-    cascadeLayoutChanged |= ImGui::SliderInt("Base Rays Per Probe", reinterpret_cast<int*>(&baseRaysPerProbe), 1, 32);
-    cascadeLayoutChanged |= ImGui::SliderFloat("Base Interval Length", &baseIntervalLength, 1.0f, 32.0f);
+    cascadeLayoutChanged |= ImGui::SliderInt("Base Rays Exponent", reinterpret_cast<int*>(&baseRayExponent), 2, 5);
+    ImGui::SliderFloat("Base Interval Length", &baseIntervalLength, 1.0f, 32.0f);
 
     if (cascadeLayoutChanged)
     {
@@ -588,31 +590,19 @@ Renderer::CascadeResource Renderer::CreateCascadeResource(UINT const width, UINT
     return resource;
 }
 
-Renderer::CascadeConstants Renderer::BuildCascadeConstants(UINT const cascadeIndex, bool const mergeUpperCascade) const
+Renderer::CascadePassConstants Renderer::BuildCascadeConstants(UINT const cascadeIndex, bool const mergeUpperCascade) const
 {
-    uint32_t const scale = 1u << cascadeIndex;
-    uint32_t const upperScale = scale * 2;
-
     return {
-        .cascadeIndex = cascadeIndex,
+        .sceneWidth = static_cast<std::uint32_t>(viewport.Width),
+        .sceneHeight = static_cast<std::uint32_t>(viewport.Height),
+
+        .cascadeIndex = static_cast<std::uint32_t>(cascadeIndex),
         .cascadeCount = cascadeCount,
-        .probeCountX = static_cast<uint32_t>(std::floor(viewport.Width / static_cast<float>(baseProbeSpacing * scale) + 0.5f) + 2),
-        .probeCountY = static_cast<uint32_t>(std::floor(viewport.Height / static_cast<float>(baseProbeSpacing * scale) + 0.5f) + 2),
-        .probeSpacing = static_cast<float>(baseProbeSpacing * scale),
-        .probeOffset = static_cast<float>(-0.5 * baseProbeSpacing * scale),
-        .raysPerProbe = baseRaysPerProbe * scale * scale,
-        .intervalStart = baseIntervalLength * static_cast<float>(scale * scale - 1.0) / 3.0f,
-        .intervalEnd = baseIntervalLength * static_cast<float>(scale * scale * 4 - 1.0) / 3.0f,
-        .radianceTextureSize = DirectX::XMFLOAT2{
-            static_cast<float>(cascadeResources[cascadeIndex].width),
-            static_cast<float>(cascadeResources[cascadeIndex].height),
-        },
-        .upperProbeCountX = cascadeIndex + 1 < cascadeCount
-            ? static_cast<uint32_t>(std::floor(viewport.Width / static_cast<float>(baseProbeSpacing * upperScale) + 0.5f) + 2)
-            : 0,
-        .upperProbeCountY = cascadeIndex + 1 < cascadeCount
-            ? static_cast<uint32_t>(std::floor(viewport.Height / static_cast<float>(baseProbeSpacing * upperScale) + 0.5f) + 2)
-            : 0,
-        .mergeUpperCascade = mergeUpperCascade ? 1u : 0u,
+
+        .baseProbeSpacing = baseProbeSpacing,
+        .baseRayExponent = baseRayExponent,
+        .baseIntervalLength = baseIntervalLength,
+
+        .mergeUpperCascade = static_cast<std::uint32_t>(mergeUpperCascade),
     };
 }

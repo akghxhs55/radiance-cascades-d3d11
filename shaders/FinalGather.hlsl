@@ -12,35 +12,40 @@ Texture2D<float4> SelectedCascade : register(t0);
 
 float4 LoadCascadeRay(int2 probeCoord, uint rayIndex)
 {
-    uint probeIndex = probeCoord.y * ProbeCountX + probeCoord.x;
-    uint linearIndex = probeIndex * RaysPerProbe + rayIndex;
-    uint textureWidth = uint(RadianceTextureSize.x);
-    uint2 texelCoord = uint2(linearIndex % textureWidth, linearIndex / textureWidth);
+    uint2 rayBlockSize = RayBlockSizeForCascade(CascadeIndex);
+
+    uint2 rayCoord = uint2(rayIndex % rayBlockSize.x, rayIndex / rayBlockSize.x);
+    uint2 texelCoord = probeCoord * rayBlockSize + rayCoord;
 
     return SelectedCascade.Load(int3(texelCoord, 0));
 }
 
 float4 GatherProbe(uint2 probeCoord)
 {
+    uint raysPerProbe = RaysPerProbeForCascade(CascadeIndex);
+
     float4 result = 0.0;
 
     [loop]
-    for (uint rayIndex = 0; rayIndex < RaysPerProbe; ++rayIndex)
+    for (uint rayIndex = 0; rayIndex < raysPerProbe; ++rayIndex)
     {
         result += LoadCascadeRay(probeCoord, rayIndex);
     }
 
-    return result / float(RaysPerProbe);
+    return result / float(raysPerProbe);
 }
 
 float4 GatherCascadeAtPosition(float2 scenePosition)
 {
-    float2 gridPosition = (scenePosition - ProbeOffset) / ProbeSpacing;
+    uint probeSpacing = ProbeSpacingForCascade(CascadeIndex);
+    uint2 probeCount = ProbeCountForCascade(CascadeIndex);
+
+    float2 gridPosition = scenePosition / probeSpacing + 0.5;
 
     int2 lowerProbe = int2(floor(gridPosition));
     float2 interpolation = frac(gridPosition);
 
-    int2 probeLimit = int2(ProbeCountX, ProbeCountY) - 1;
+    int2 probeLimit = int2(probeCount.x, probeCount.y) - 1;
 
     uint2 probe00 = uint2(clamp(lowerProbe, int2(0, 0), probeLimit));
     uint2 probe10 = uint2(clamp(lowerProbe + int2(1, 0), int2(0, 0), probeLimit));
