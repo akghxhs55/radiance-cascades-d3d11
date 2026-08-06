@@ -10,7 +10,7 @@
 #include "Scene.h"
 #include "Vertex.h"
 
-class Renderer
+class Renderer final
 {
 public:
     explicit Renderer(HWND windowHandle);
