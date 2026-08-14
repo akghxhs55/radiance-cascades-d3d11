@@ -4,7 +4,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
-#include <vector>
+#include <array>
 #include <cstdint>
 
 #include "Scene.h"
@@ -64,6 +64,15 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> cascadeConstantBuffer;
     Microsoft::WRL::ComPtr<ID3D11Buffer> finalGatherConstantBuffer;
 
+    struct CascadeDimensions
+    {
+        UINT width;
+        UINT height;
+    };
+
+    [[nodiscard]]
+    CascadeDimensions CalculateCascadeDimensions(UINT cascadeIndex) const;
+
     struct CascadeResource
     {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
@@ -77,7 +86,7 @@ private:
     [[nodiscard]]
     CascadeResource CreateCascadeResource(UINT width, UINT height);
 
-    std::vector<CascadeResource> cascadeResources;
+    std::array<CascadeResource, 2> cascadeResources;
 
     struct CascadePassConstants
     {
@@ -97,5 +106,4 @@ private:
 
     [[nodiscard]]
     CascadePassConstants BuildCascadeConstants(UINT cascadeIndex, bool mergeUpperCascade = true) const;
-
 };

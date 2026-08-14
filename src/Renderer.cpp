@@ -46,8 +46,8 @@ namespace
         std::array<GpuCircleData, MaxCircles> circleData = {};
         std::array<GpuCircleEmission, MaxCircles> circleEmission = {};
         std::array<GpuBox, MaxBoxes> boxes = {};
-        std::uint32_t circleCount = 0;
-        std::uint32_t boxCount = 0;
+        std::uint32_t circleCount = 0u;
+        std::uint32_t boxCount = 0u;
         std::array<std::uint32_t, 2> padding = {};
     };
     static_assert(sizeof(SceneConstants) % 16 == 0);
@@ -94,6 +94,11 @@ namespace
 
         return shaderBlob;
     }
+
+    bool SliderUInt(char const* const label, std::uint32_t* const value, std::uint32_t const min, std::uint32_t const max)
+    {
+        return ImGui::SliderScalar(label, ImGuiDataType_U32, value, &min, &max);
+    }
 }
 
 Renderer::Renderer(HWND const windowHandle)
@@ -124,7 +129,6 @@ Renderer::~Renderer() noexcept
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
 
-    cascadeResources.clear();
     finalGatherConstantBuffer.Reset();
     cascadeConstantBuffer.Reset();
     sceneConstantBuffer.Reset();
@@ -158,15 +162,15 @@ void Renderer::CreateDeviceAndSwapChain()
 
     DXGI_SWAP_CHAIN_DESC const swapChainDesc{
         .BufferDesc = {
-            .Width = 0,
-            .Height = 0,
+            .Width = 0u,
+            .Height = 0u,
             .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
         },
         .SampleDesc = {
-            .Count = 1,
+            .Count = 1u,
         },
         .BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
-        .BufferCount = 2,
+        .BufferCount = 2u,
         .OutputWindow = windowHandle,
         .Windowed = true,
         .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
@@ -324,23 +328,20 @@ void Renderer::CreateFinalGatherConstantBuffer()
 
 void Renderer::CreateCascadeResources()
 {
-    cascadeResources.clear();
-    cascadeResources.reserve(cascadeCount);
+    UINT maxWidth = 0u;
+    UINT maxHeight = 0u;
 
-    for (UINT cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
+    for (UINT cascadeIndex = 0u; cascadeIndex < cascadeCount; ++cascadeIndex)
     {
-        UINT const scale = 1u << cascadeIndex;
+        auto const [width, height] = CalculateCascadeDimensions(cascadeIndex);
 
-        UINT const probeCountX = CalculateProbeCount(viewport.Width, baseProbeSpacing * scale);
-        UINT const probeCountY = CalculateProbeCount(viewport.Height, baseProbeSpacing * scale);
+        maxWidth = std::max(maxWidth, width);
+        maxHeight = std::max(maxHeight, height);
+    }
 
-        UINT const rayBlockWidth = 1u << (baseRayExponent / 2 + cascadeIndex);
-        UINT const rayBlockHeight = 1u << ((baseRayExponent + 1) /  2 + cascadeIndex);
-
-        UINT const width = rayBlockWidth * probeCountX;
-        UINT const height = rayBlockHeight * probeCountY;
-
-        cascadeResources.push_back(CreateCascadeResource(width, height));
+    for (auto& cascadeResource : cascadeResources)
+    {
+        cascadeResource = CreateCascadeResource(maxWidth, maxHeight);
     }
 }
 
@@ -426,16 +427,18 @@ void Renderer::RenderRadianceCascades()
 
 void Renderer::RenderCascade(UINT const cascadeIndex, bool const mergeUpperCascade)
 {
-    CascadeResource& current = cascadeResources[cascadeIndex];
+    CascadeResource& current = cascadeResources[cascadeIndex % 2];
 
     ID3D11ShaderResourceView* const nullSRV = nullptr;
     deviceContext->PSSetShaderResources(0, 1, &nullSRV);
 
+    auto const [width, height] = CalculateCascadeDimensions(cascadeIndex);
+
     D3D11_VIEWPORT const cascadeViewport{
         .TopLeftX = 0.0f,
         .TopLeftY = 0.0f,
-        .Width = static_cast<float>(current.width),
-        .Height = static_cast<float>(current.height),
+        .Width = static_cast<float>(width),
+        .Height = static_cast<float>(height),
         .MinDepth = 0.0f,
         .MaxDepth = 1.0f,
     };
@@ -448,7 +451,7 @@ void Renderer::RenderCascade(UINT const cascadeIndex, bool const mergeUpperCasca
 
     if (mergeUpperCascade && cascadeIndex + 1 < cascadeCount)
     {
-        CascadeResource& upperCascade = cascadeResources[cascadeIndex + 1];
+        CascadeResource& upperCascade = cascadeResources[(cascadeIndex + 1) % 2];
         deviceContext->PSSetShaderResources(0, 1, upperCascade.shaderResourceView.GetAddressOf());
     }
     else
@@ -491,7 +494,7 @@ void Renderer::RenderFinalImage()
     deviceContext->PSSetShaderResources(
         0,
         1,
-        cascadeResources[selectedCascadeIndex].shaderResourceView.GetAddressOf()
+        cascadeResources[selectedCascadeIndex % 2].shaderResourceView.GetAddressOf()
     );
 
     deviceContext->RSSetViewports(1, &viewport);
@@ -537,9 +540,9 @@ void Renderer::DrawDebugUi()
     }
 
     bool cascadeLayoutChanged = false;
-    cascadeLayoutChanged |= ImGui::SliderInt("Cascade Count", reinterpret_cast<int*>(&cascadeCount), 1, 8);
-    cascadeLayoutChanged |= ImGui::SliderInt("Base Probe Spacing", reinterpret_cast<int*>(&baseProbeSpacing), 1, 32);
-    cascadeLayoutChanged |= ImGui::SliderInt("Base Rays Exponent", reinterpret_cast<int*>(&baseRayExponent), 2, 5);
+    cascadeLayoutChanged |= SliderUInt("Cascade Count", &cascadeCount, 1, 8);
+    cascadeLayoutChanged |= SliderUInt("Base Probe Spacing", &baseProbeSpacing, 1, 32);
+    cascadeLayoutChanged |= SliderUInt("Base Rays Exponent", &baseRayExponent, 2, 5);
     ImGui::SliderFloat("Base Interval Length", &baseIntervalLength, 1.0f, 32.0f);
 
     if (cascadeLayoutChanged)
@@ -551,6 +554,21 @@ void Renderer::DrawDebugUi()
 
     ImGui::Render();
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+Renderer::CascadeDimensions Renderer::CalculateCascadeDimensions(UINT const cascadeIndex) const
+{
+    UINT const scale = 1u << cascadeIndex;
+    UINT const probeSpacing = baseProbeSpacing * scale;
+    UINT const probeCountX = (static_cast<UINT>(viewport.Width) + probeSpacing / 2) / probeSpacing + 2;
+    UINT const probeCountY = (static_cast<UINT>(viewport.Height) + probeSpacing / 2) / probeSpacing + 2;
+    UINT const rayBlockWidth = 1u << (baseRayExponent / 2 + cascadeIndex);
+    UINT const rayBlockHeight = 1u << ((baseRayExponent + 1) / 2 + cascadeIndex);
+
+    return {
+        .width = rayBlockWidth * probeCountX,
+        .height = rayBlockHeight * probeCountY,
+    };
 }
 
 Renderer::CascadeResource Renderer::CreateCascadeResource(UINT const width, UINT const height)

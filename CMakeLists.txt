@@ -20,7 +20,7 @@ add_executable(RadianceCascades
         external/imgui/backends/imgui_impl_dx11.cpp
 )
 
-target_compile_definitions(RadianceCascades PRIVATE UNICODE _UNICODE)
+target_compile_definitions(RadianceCascades PRIVATE UNICODE _UNICODE NOMINMAX)
 
 target_include_directories(RadianceCascades PRIVATE
         external/imgui
