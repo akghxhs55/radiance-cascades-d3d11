@@ -7,8 +7,7 @@
 #include <array>
 #include <cstdint>
 
-#include "Scene.h"
-#include "Vertex.h"
+struct Scene;
 
 class Renderer final
 {

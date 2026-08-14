@@ -8,10 +8,12 @@
 #include <cmath>
 #include <cstdint>
 
-#include "D3DUtils.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
+
+#include "D3DUtils.h"
+#include "Scene.h"
 #include "Vertex.h"
 
 namespace
