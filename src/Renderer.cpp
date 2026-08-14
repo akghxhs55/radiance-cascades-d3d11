@@ -18,8 +18,8 @@
 
 namespace
 {
-    constexpr UINT MaxCircles = 16;
-    constexpr UINT MaxBoxes = 16;
+    constexpr std::uint32_t MaxCircles = 16;
+    constexpr std::uint32_t MaxBoxes = 16;
 
     struct GpuCircleData
     {
@@ -60,12 +60,6 @@ namespace
         std::array<std::uint32_t, 3> padding;
     };
     static_assert(sizeof(FinalGatherConstants) % 16 == 0);
-
-    [[nodiscard]]
-    UINT CalculateProbeCount(float const sceneSize, UINT const probeSpacing)
-    {
-        return static_cast<UINT>(std::floor(sceneSize / static_cast<float>(probeSpacing) + 0.5f)) + 2;
-    }
 
     [[nodiscard]]
     Microsoft::WRL::ComPtr<ID3DBlob> CompileShader(
@@ -190,7 +184,7 @@ void Renderer::CreateDeviceAndSwapChain()
             nullptr,
             createDeviceFlags,
             featureLevels.data(),
-            static_cast<UINT>(featureLevels.size()),
+            featureLevels.size(),
             D3D11_SDK_VERSION,
             &swapChainDesc,
             swapChain.ReleaseAndGetAddressOf(),
@@ -333,7 +327,7 @@ void Renderer::CreateCascadeResources()
     UINT maxWidth = 0u;
     UINT maxHeight = 0u;
 
-    for (UINT cascadeIndex = 0u; cascadeIndex < cascadeCount; ++cascadeIndex)
+    for (auto cascadeIndex = 0u; cascadeIndex < cascadeCount; ++cascadeIndex)
     {
         auto const [width, height] = CalculateCascadeDimensions(cascadeIndex);
 
@@ -359,14 +353,14 @@ void Renderer::UpdateSceneConstantBuffer(Scene const& scene)
 {
     SceneConstants constants = {};
 
-    for (Circle const& circle : scene.circles)
+    for (auto const& circle : scene.circles)
     {
         if (constants.circleCount == MaxCircles)
         {
             break;
         }
 
-        UINT const index = constants.circleCount++;
+        std::uint32_t const index = constants.circleCount++;
         constants.circleData[index] = {
             .center = circle.center,
             .radius = circle.radius,
@@ -376,7 +370,7 @@ void Renderer::UpdateSceneConstantBuffer(Scene const& scene)
         };
     }
 
-    for (Box const& box : scene.boxes)
+    for (auto const& box : scene.boxes)
     {
         if (constants.boxCount == MaxBoxes)
         {
@@ -416,7 +410,7 @@ void Renderer::RenderRadianceCascades()
 
     if (displayMode == 1)
     {
-        UINT const localCascadeIndex = static_cast<UINT>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1));
+        auto const localCascadeIndex = static_cast<std::uint32_t>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1));
         RenderCascade(localCascadeIndex, false);
     }
 
@@ -427,7 +421,7 @@ void Renderer::RenderRadianceCascades()
     deviceContext->OMSetRenderTargets(1, &nullRTV, nullptr);
 }
 
-void Renderer::RenderCascade(UINT const cascadeIndex, bool const mergeUpperCascade)
+void Renderer::RenderCascade(std::uint32_t const cascadeIndex, bool const mergeUpperCascade)
 {
     CascadeResource& current = cascadeResources[cascadeIndex % 2];
 
@@ -476,9 +470,9 @@ void Renderer::RenderFinalImage()
     deviceContext->VSSetShader(fullscreenVertexShader.Get(), nullptr, 0);
     deviceContext->PSSetShader(finalGatherPixelShader.Get(), nullptr, 0);
 
-    UINT const selectedCascadeIndex = displayMode == 1
-        ? static_cast<UINT>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1))
-        : 0;
+    auto const selectedCascadeIndex = displayMode == 1
+        ? static_cast<std::uint32_t>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1))
+        : 0u;
 
     CascadePassConstants const cascadeConstants = BuildCascadeConstants(selectedCascadeIndex);
     deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &cascadeConstants, 0, 0);
@@ -558,14 +552,14 @@ void Renderer::DrawDebugUi()
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
-Renderer::CascadeDimensions Renderer::CalculateCascadeDimensions(UINT const cascadeIndex) const
+Renderer::CascadeDimensions Renderer::CalculateCascadeDimensions(std::uint32_t const cascadeIndex) const
 {
-    UINT const scale = 1u << cascadeIndex;
-    UINT const probeSpacing = baseProbeSpacing * scale;
-    UINT const probeCountX = (static_cast<UINT>(viewport.Width) + probeSpacing / 2) / probeSpacing + 2;
-    UINT const probeCountY = (static_cast<UINT>(viewport.Height) + probeSpacing / 2) / probeSpacing + 2;
-    UINT const rayBlockWidth = 1u << (baseRayExponent / 2 + cascadeIndex);
-    UINT const rayBlockHeight = 1u << ((baseRayExponent + 1) / 2 + cascadeIndex);
+    std::uint32_t const scale = 1u << cascadeIndex;
+    std::uint32_t const probeSpacing = baseProbeSpacing * scale;
+    std::uint32_t const probeCountX = (static_cast<std::uint32_t>(viewport.Width) + probeSpacing / 2) / probeSpacing + 2;
+    std::uint32_t const probeCountY = (static_cast<std::uint32_t>(viewport.Height) + probeSpacing / 2) / probeSpacing + 2;
+    std::uint32_t const rayBlockWidth = 1u << (baseRayExponent / 2 + cascadeIndex);
+    std::uint32_t const rayBlockHeight = 1u << ((baseRayExponent + 1) / 2 + cascadeIndex);
 
     return {
         .width = rayBlockWidth * probeCountX,
@@ -573,11 +567,13 @@ Renderer::CascadeDimensions Renderer::CalculateCascadeDimensions(UINT const casc
     };
 }
 
-Renderer::CascadeResource Renderer::CreateCascadeResource(UINT const width, UINT const height)
+Renderer::CascadeResource Renderer::CreateCascadeResource(std::uint32_t const width, std::uint32_t const height)
 {
     CascadeResource resource{
-        .width = width,
-        .height = height,
+        .dimensions = {
+            .width = width,
+            .height = height,
+        }
     };
 
     D3D11_TEXTURE2D_DESC const desc{
@@ -610,7 +606,7 @@ Renderer::CascadeResource Renderer::CreateCascadeResource(UINT const width, UINT
     return resource;
 }
 
-Renderer::CascadePassConstants Renderer::BuildCascadeConstants(UINT const cascadeIndex, bool const mergeUpperCascade) const
+Renderer::CascadePassConstants Renderer::BuildCascadeConstants(std::uint32_t const cascadeIndex, bool const mergeUpperCascade) const
 {
     return {
         .sceneWidth = static_cast<std::uint32_t>(viewport.Width),

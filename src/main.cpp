@@ -71,7 +71,7 @@ int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
 
     while (true)
     {
-        if (const auto exitCode = ProcessWindowMessages())
+        if (auto const exitCode = ProcessWindowMessages())
         {
             return static_cast<int>(*exitCode);
         }

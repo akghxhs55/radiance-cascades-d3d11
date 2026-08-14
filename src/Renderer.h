@@ -33,7 +33,7 @@ private:
 
     void UpdateSceneConstantBuffer(Scene const& scene);
     void RenderRadianceCascades();
-    void RenderCascade(UINT cascadeIndex, bool mergeUpperCascade = true);
+    void RenderCascade(std::uint32_t cascadeIndex, bool mergeUpperCascade = true);
     void RenderFinalImage();
     void DrawDebugUi();
 
@@ -70,7 +70,7 @@ private:
     };
 
     [[nodiscard]]
-    CascadeDimensions CalculateCascadeDimensions(UINT cascadeIndex) const;
+    CascadeDimensions CalculateCascadeDimensions(std::uint32_t cascadeIndex) const;
 
     struct CascadeResource
     {
@@ -78,12 +78,11 @@ private:
         Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTargetView;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shaderResourceView;
 
-        UINT width;
-        UINT height;
+        CascadeDimensions dimensions;
     };
 
     [[nodiscard]]
-    CascadeResource CreateCascadeResource(UINT width, UINT height);
+    CascadeResource CreateCascadeResource(std::uint32_t width, std::uint32_t height);
 
     std::array<CascadeResource, 2> cascadeResources;
 
@@ -104,5 +103,5 @@ private:
     static_assert(sizeof(CascadePassConstants) % 16 == 0);
 
     [[nodiscard]]
-    CascadePassConstants BuildCascadeConstants(UINT cascadeIndex, bool mergeUpperCascade = true) const;
+    CascadePassConstants BuildCascadeConstants(std::uint32_t cascadeIndex, bool mergeUpperCascade = true) const;
 };
