@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <d3d11.h>
+#include <dxgi1_4.h>
 #include <wrl/client.h>
 
 #include <array>
@@ -51,6 +52,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> deviceContext;
     Microsoft::WRL::ComPtr<IDXGISwapChain> swapChain;
+    Microsoft::WRL::ComPtr<IDXGIAdapter3> adapter;
     D3D11_VIEWPORT viewport{};
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTargetView;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerState;

@@ -133,6 +133,7 @@ Renderer::~Renderer() noexcept
     rasterizerState.Reset();
     renderTargetView.Reset();
     swapChain.Reset();
+    adapter.Reset();
     deviceContext.Reset();
     device.Reset();
 }
@@ -194,6 +195,20 @@ void Renderer::CreateDeviceAndSwapChain()
         ),
         "D3D11CreateDeviceAndSwapChain failed"
     );
+
+    Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
+    ThrowIfFailed(
+        device.As(&dxgiDevice),
+        "ID3D11Device::QueryInterface for IDXGIDevice failed"
+    );
+
+    Microsoft::WRL::ComPtr<IDXGIAdapter> dxgiAdapter;
+    ThrowIfFailed(
+        dxgiDevice->GetAdapter(dxgiAdapter.GetAddressOf()),
+        "IDXGIDevice::GetAdapter failed"
+    );
+
+    dxgiAdapter.As(&adapter);
 
     DXGI_SWAP_CHAIN_DESC createdAtSwapChainDesc;
     ThrowIfFailed(
@@ -517,6 +532,25 @@ void Renderer::DrawDebugUi()
 
     ImGui::Text("FPS: %.1f", io.Framerate);
     ImGui::Text("Frame Time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
+
+    constexpr double bytesPerMiB = 1024.0 * 1024.0;
+    std::uint64_t cascadeTextureBytes = 0u;
+    for (CascadeResource const& cascadeResource : cascadeResources)
+    {
+        cascadeTextureBytes += static_cast<std::uint64_t>(cascadeResource.dimensions.width)
+            * cascadeResource.dimensions.height * 8u;
+    }
+    ImGui::Text("Cascade textures (est.): %.2f MiB", static_cast<double>(cascadeTextureBytes) / bytesPerMiB);
+
+    DXGI_QUERY_VIDEO_MEMORY_INFO localMemoryInfo{};
+    if (adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &localMemoryInfo)))
+    {
+        ImGui::Text("Local VRAM: %.2f / %.2f MiB",
+            static_cast<double>(localMemoryInfo.CurrentUsage) / bytesPerMiB,
+            static_cast<double>(localMemoryInfo.Budget) / bytesPerMiB
+        );
+    }
+
     ImGui::Checkbox("VSync", &vSyncEnabled);
 
     constexpr char const* displayModes[] = {
