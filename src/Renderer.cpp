@@ -224,6 +224,8 @@ void Renderer::CreateDeviceAndSwapChain()
         .MinDepth = 0.0f,
         .MaxDepth = 1.0f,
     };
+
+    cascadeCount = CalculateRequiredCascadeCount();
 }
 
 void Renderer::CreateRenderTargetView()
@@ -531,6 +533,8 @@ void Renderer::DrawDebugUi()
     ImGui::Text("FPS: %.1f", io.Framerate);
     ImGui::Text("Frame Time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
 
+    ImGui::Text("Cascade Count: %u", cascadeCount);
+
     constexpr double bytesPerMiB = 1024.0 * 1024.0;
     std::uint64_t cascadeTextureBytes = 0u;
     for (CascadeResource const& cascadeResource : cascadeResources)
@@ -568,10 +572,19 @@ void Renderer::DrawDebugUi()
     }
 
     bool cascadeLayoutChanged = false;
-    cascadeLayoutChanged |= SliderUInt("Cascade Count", &cascadeCount, 1, 8);
     cascadeLayoutChanged |= SliderUInt("Base Probe Spacing", &baseProbeSpacing, 1, 32);
     cascadeLayoutChanged |= SliderUInt("Base Rays Exponent", &baseRayExponent, 2, 5);
-    ImGui::SliderFloat("Base Interval Length", &baseIntervalLength, 1.0f, 32.0f);
+
+    if (ImGui::SliderFloat("Base Interval Length", &baseIntervalLength, 1.0f, 64.0f))
+    {
+        if (std::uint32_t const newCascadeCount = CalculateRequiredCascadeCount();
+            newCascadeCount != cascadeCount)
+        {
+            cascadeCount = newCascadeCount;
+            debugCascadeIndex = std::min(debugCascadeIndex, static_cast<int>(cascadeCount) - 1);
+            cascadeLayoutChanged = true;
+        }
+    }
 
     if (cascadeLayoutChanged)
     {
@@ -582,6 +595,16 @@ void Renderer::DrawDebugUi()
 
     ImGui::Render();
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+std::uint32_t Renderer::CalculateRequiredCascadeCount() const
+{
+    auto const width = static_cast<double>(viewport.Width);
+    auto const height = static_cast<double>(viewport.Height);
+
+    auto const coverageDistance = std::sqrt(width * width + height * height);
+
+    return std::max(1u, static_cast<std::uint32_t>(std::ceil(std::log(3.0 * coverageDistance / baseIntervalLength + 1.0) / std::log(4.0))));
 }
 
 Renderer::CascadeDimensions Renderer::CalculateCascadeDimensions(std::uint32_t const cascadeIndex) const

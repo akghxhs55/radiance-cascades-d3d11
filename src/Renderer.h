@@ -65,6 +65,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> cascadeConstantBuffer;
     Microsoft::WRL::ComPtr<ID3D11Buffer> finalGatherConstantBuffer;
 
+    [[nodiscard]]
+    std::uint32_t CalculateRequiredCascadeCount() const;
+
     struct CascadeDimensions
     {
         UINT width;
