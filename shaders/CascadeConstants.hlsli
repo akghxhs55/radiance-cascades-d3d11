@@ -39,12 +39,22 @@ uint RaysPerProbeForCascade(uint cascadeIndex)
     return 1u << (BaseRayExponent + cascadeIndex * 2);
 }
 
+uint StoredRaysPerProbeForCascade(uint cascadeIndex)
+{
+    return RaysPerProbeForCascade(cascadeIndex) / 4u;
+}
+
 uint2 RayBlockSizeForCascade(uint cascadeIndex)
 {
     uint widthExponent = BaseRayExponent / 2 + cascadeIndex;
     uint heightExponent = (BaseRayExponent + 1) / 2 + cascadeIndex;
 
     return uint2(1u << widthExponent, 1u << heightExponent);
+}
+
+uint2 StoredRayBlockSizeForCascade(uint cascadeIndex)
+{
+    return RayBlockSizeForCascade(cascadeIndex) / 2u;
 }
 
 float2 IntervalForCascade(uint cascadeIndex)

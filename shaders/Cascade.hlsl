@@ -1,6 +1,5 @@
 static const uint MaxCircles = 16;
 static const uint MaxBoxes = 16;
-static const uint CascadeBranchingFactor = 4;
 static const uint MaxRayMarchSteps = 128;
 
 static const uint HitNothing = 0;
@@ -98,28 +97,14 @@ float4 RayMarchInterval(float2 probePosition, float2 rayDirection, float interva
     return float4(0.0, 0.0, 0.0, 1.0);
 }
 
-float4 LoadUpperCascadeRay(uint2 probeCoord, uint rayIndex)
+float4 LoadUpperProbe(uint2 probeCoord, uint rayIndex)
 {
-    uint2 upperRayBlockSize = RayBlockSizeForCascade(CascadeIndex + 1);
+    uint2 storedUpperRayBlockSize = StoredRayBlockSizeForCascade(CascadeIndex + 1);
 
-    uint2 rayCoord = uint2(rayIndex % upperRayBlockSize.x, rayIndex / upperRayBlockSize.x);
-    uint2 texelCoord = probeCoord * upperRayBlockSize + rayCoord;
+    uint2 rayCoord = uint2(rayIndex % storedUpperRayBlockSize.x, rayIndex / storedUpperRayBlockSize.x);
+    uint2 texelCoord = probeCoord * storedUpperRayBlockSize + rayCoord;
 
     return UpperCascade.Load(int3(texelCoord, 0));
-}
-
-float4 SampleUpperProbe(uint2 probeCoord, uint currentRayIndex)
-{
-    uint firstUpperRay = currentRayIndex * CascadeBranchingFactor;
-
-    float4 radiance = 0.0;
-    [unroll]
-    for (uint rayOffset = 0; rayOffset < CascadeBranchingFactor; ++rayOffset)
-    {
-        radiance += LoadUpperCascadeRay(probeCoord, firstUpperRay + rayOffset);
-    }
-
-    return radiance / float(CascadeBranchingFactor);
 }
 
 float4 SampleUpperCascade(float2 probePosition, uint currentRayIndex)
@@ -143,10 +128,10 @@ float4 SampleUpperCascade(float2 probePosition, uint currentRayIndex)
     uint2 probe01 = uint2(clamp(lowerProbe + int2(0, 1), int2(0, 0), upperProbeLimit));
     uint2 probe11 = uint2(clamp(lowerProbe + int2(1, 1), int2(0, 0), upperProbeLimit));
 
-    float4 radiance00 = SampleUpperProbe(probe00, currentRayIndex);
-    float4 radiance10 = SampleUpperProbe(probe10, currentRayIndex);
-    float4 radiance01 = SampleUpperProbe(probe01, currentRayIndex);
-    float4 radiance11 = SampleUpperProbe(probe11, currentRayIndex);
+    float4 radiance00 = LoadUpperProbe(probe00, currentRayIndex);
+    float4 radiance10 = LoadUpperProbe(probe10, currentRayIndex);
+    float4 radiance01 = LoadUpperProbe(probe01, currentRayIndex);
+    float4 radiance11 = LoadUpperProbe(probe11, currentRayIndex);
 
     float4 upperRow = lerp(radiance00, radiance10, interpolation.x);
     float4 lowerRow = lerp(radiance01, radiance11, interpolation.x);
@@ -164,13 +149,13 @@ float4 PSCascade(PSInput input) : SV_Target
     uint2 probeCount = ProbeCountForCascade(CascadeIndex);
     uint probeSpacing = ProbeSpacingForCascade(CascadeIndex);
     uint raysPerProbe = RaysPerProbeForCascade(CascadeIndex);
-    uint2 rayBlockSize = RayBlockSizeForCascade(CascadeIndex);
+    uint2 storedRayBlockSize = StoredRayBlockSizeForCascade(CascadeIndex);
     float2 interval = IntervalForCascade(CascadeIndex);
     float intervalStart = interval.x;
     float intervalEnd = interval.y;
 
     uint2 texelCoord = uint2(input.position.xy);
-    uint2 probeCoord = texelCoord / rayBlockSize;
+    uint2 probeCoord = texelCoord / storedRayBlockSize;
 
     if (probeCoord.x >= probeCount.x || probeCoord.y >= probeCount.y)
     {
@@ -179,19 +164,28 @@ float4 PSCascade(PSInput input) : SV_Target
 
     float2 probePosition = (float2(probeCoord) - 0.5) * probeSpacing;
 
-    uint rayIndex = (texelCoord.x % rayBlockSize.x) + (texelCoord.y % rayBlockSize.y) * rayBlockSize.x;
+    uint storedRayIndex = (texelCoord.x % storedRayBlockSize.x) + (texelCoord.y % storedRayBlockSize.y) * storedRayBlockSize.x;
 
-    float angle = (float(rayIndex) + 0.5) / float(raysPerProbe) * Tau;
-    float2 rayDirection = float2(cos(angle), sin(angle));
+    float4 accumulatedResult = 0.0;
 
-    float4 localResult = RayMarchInterval(probePosition, rayDirection, intervalStart, intervalEnd);
-
-    if (MergeUpperCascade != 0 && CascadeIndex + 1 < CascadeCount && localResult.a > 0.001)
+    for (uint rayOffset = 0; rayOffset < 4; ++rayOffset)
     {
-        float4 upperResult = SampleUpperCascade(probePosition, rayIndex);
-        localResult.rgb += localResult.a * upperResult.rgb;
-        localResult.a *= upperResult.a;
+        uint tracedRayIndex = storedRayIndex * 4 + rayOffset;
+
+        float angle = (float(tracedRayIndex) + 0.5) / float(raysPerProbe) * Tau;
+        float2 rayDirection = float2(cos(angle), sin(angle));
+
+        float4 localResult = RayMarchInterval(probePosition, rayDirection, intervalStart, intervalEnd);
+
+        if (MergeUpperCascade != 0 && CascadeIndex + 1 < CascadeCount && localResult.a > 0.001)
+        {
+            float4 upperResult = SampleUpperCascade(probePosition, tracedRayIndex);
+            localResult.rgb += localResult.a * upperResult.rgb;
+            localResult.a *= upperResult.a;
+        }
+
+        accumulatedResult += localResult;
     }
 
-    return localResult;
+    return accumulatedResult * 0.25;
 }

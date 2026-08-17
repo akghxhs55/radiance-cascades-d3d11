@@ -12,7 +12,7 @@ Texture2D<float4> SelectedCascade : register(t0);
 
 float4 LoadCascadeRay(int2 probeCoord, uint rayIndex)
 {
-    uint2 rayBlockSize = RayBlockSizeForCascade(CascadeIndex);
+    uint2 rayBlockSize = StoredRayBlockSizeForCascade(CascadeIndex);
 
     uint2 rayCoord = uint2(rayIndex % rayBlockSize.x, rayIndex / rayBlockSize.x);
     uint2 texelCoord = probeCoord * rayBlockSize + rayCoord;
@@ -22,7 +22,7 @@ float4 LoadCascadeRay(int2 probeCoord, uint rayIndex)
 
 float4 GatherProbe(uint2 probeCoord)
 {
-    uint raysPerProbe = RaysPerProbeForCascade(CascadeIndex);
+    uint raysPerProbe = StoredRaysPerProbeForCascade(CascadeIndex);
 
     float4 result = 0.0;
 

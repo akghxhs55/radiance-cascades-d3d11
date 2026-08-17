@@ -341,19 +341,15 @@ void Renderer::CreateCascadeResources()
 {
     UINT maxWidth = 0u;
     UINT maxHeight = 0u;
-
     for (auto cascadeIndex = 0u; cascadeIndex < cascadeCount; ++cascadeIndex)
     {
         auto const [width, height] = CalculateCascadeDimensions(cascadeIndex);
-
         maxWidth = std::max(maxWidth, width);
         maxHeight = std::max(maxHeight, height);
     }
 
-    for (auto& cascadeResource : cascadeResources)
-    {
-        cascadeResource = CreateCascadeResource(maxWidth, maxHeight);
-    }
+    cascadeResources[0] = CreateCascadeResource(maxWidth, maxHeight);
+    cascadeResources[1] = CreateCascadeResource(maxWidth, maxHeight);
 }
 
 void Renderer::InitializeImGui()
@@ -592,8 +588,11 @@ Renderer::CascadeDimensions Renderer::CalculateCascadeDimensions(std::uint32_t c
     std::uint32_t const probeSpacing = baseProbeSpacing * scale;
     std::uint32_t const probeCountX = (static_cast<std::uint32_t>(viewport.Width) + probeSpacing / 2) / probeSpacing + 2;
     std::uint32_t const probeCountY = (static_cast<std::uint32_t>(viewport.Height) + probeSpacing / 2) / probeSpacing + 2;
-    std::uint32_t const rayBlockWidth = 1u << (baseRayExponent / 2 + cascadeIndex);
-    std::uint32_t const rayBlockHeight = 1u << ((baseRayExponent + 1) / 2 + cascadeIndex);
+
+    std::uint32_t const widthExponent = baseRayExponent / 2 + cascadeIndex;
+    std::uint32_t const heightExponent = (baseRayExponent + 1) / 2 + cascadeIndex;
+    std::uint32_t const rayBlockWidth = (1u << widthExponent) / 2u;
+    std::uint32_t const rayBlockHeight = (1u << heightExponent) / 2u;
 
     return {
         .width = rayBlockWidth * probeCountX,
