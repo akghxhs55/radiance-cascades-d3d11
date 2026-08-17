@@ -414,15 +414,17 @@ void Renderer::RenderRadianceCascades()
     };
     deviceContext->PSSetConstantBuffers(0, 2, constantBuffers);
 
-    for (int cascadeIndex = static_cast<int>(cascadeCount) - 1; cascadeIndex >= 0; --cascadeIndex)
-    {
-        RenderCascade(cascadeIndex);
-    }
-
     if (displayMode == 1)
     {
-        auto const localCascadeIndex = static_cast<std::uint32_t>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1));
-        RenderCascade(localCascadeIndex, false);
+        auto const selectedCascadeIndex = static_cast<std::uint32_t>(std::clamp(debugCascadeIndex, 0, static_cast<int>(cascadeCount) - 1));
+        RenderCascade(selectedCascadeIndex, false);
+    }
+    else
+    {
+        for (int cascadeIndex = static_cast<int>(cascadeCount) - 1; cascadeIndex >= 0; --cascadeIndex)
+        {
+            RenderCascade(static_cast<std::uint32_t>(cascadeIndex));
+        }
     }
 
     ID3D11ShaderResourceView* const nullSRV = nullptr;
