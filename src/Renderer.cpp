@@ -140,6 +140,13 @@ Renderer::~Renderer() noexcept
 
 void Renderer::Render(Scene const& scene)
 {
+    if (isMinimized)
+    {
+        return;
+    }
+
+    ApplyPendingResize();
+
     UpdateSceneConstantBuffer(scene);
 
     RenderRadianceCascades();
@@ -151,6 +158,20 @@ void Renderer::Render(Scene const& scene)
         swapChain->Present(vSyncEnabled ? 1 : 0, 0),
         "IDXGISwapChain::Present failed"
     );
+}
+
+void Renderer::OnWindowSize(UINT const width, UINT const height, bool const minimized) noexcept
+{
+    isMinimized = minimized || width == 0 || height == 0;
+
+    if (isMinimized)
+    {
+        return;
+    }
+
+    pendingWidth = width;
+    pendingHeight = height;
+    resizePending = true;
 }
 
 void Renderer::CreateDeviceAndSwapChain()
@@ -360,6 +381,31 @@ void Renderer::InitializeImGui()
     ImGui::CreateContext();
     ImGui_ImplWin32_Init(windowHandle);
     ImGui_ImplDX11_Init(device.Get(), deviceContext.Get());
+}
+
+void Renderer::ApplyPendingResize()
+{
+    if (!resizePending || isMinimized || pendingWidth == 0 || pendingHeight == 0)
+    {
+        return;
+    }
+
+    deviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    renderTargetView.Reset();
+
+    ThrowIfFailed(
+        swapChain->ResizeBuffers(0, pendingWidth, pendingHeight, DXGI_FORMAT_UNKNOWN, 0),
+        "IDXGISwapChain::ResizeBuffers failed"
+    );
+    viewport.Width = static_cast<float>(pendingWidth);
+    viewport.Height = static_cast<float>(pendingHeight);
+
+    CreateRenderTargetView();
+    cascadeCount = CalculateRequiredCascadeCount();
+    debugCascadeIndex = std::min(debugCascadeIndex, static_cast<int>(cascadeCount) - 1);
+    CreateCascadeResources();
+
+    resizePending = false;
 }
 
 void Renderer::UpdateSceneConstantBuffer(Scene const& scene)

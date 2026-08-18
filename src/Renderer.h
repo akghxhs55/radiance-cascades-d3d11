@@ -20,6 +20,7 @@ public:
     Renderer& operator=(Renderer const&) = delete;
 
     void Render(Scene const& scene);
+    void OnWindowSize(UINT width, UINT height, bool minimized) noexcept;
 
 private:
     void CreateDeviceAndSwapChain();
@@ -32,6 +33,7 @@ private:
     void CreateCascadeResources();
     void InitializeImGui();
 
+    void ApplyPendingResize();
     void UpdateSceneConstantBuffer(Scene const& scene);
     void RenderRadianceCascades();
     void RenderCascade(std::uint32_t cascadeIndex, bool mergeUpperCascade = true);
@@ -40,6 +42,11 @@ private:
 
 private:
     HWND const windowHandle;
+
+    UINT pendingWidth = 0;
+    UINT pendingHeight = 0;
+    bool resizePending = false;
+    bool isMinimized = false;
 
     bool vSyncEnabled = true;
     std::uint32_t cascadeCount = 5;

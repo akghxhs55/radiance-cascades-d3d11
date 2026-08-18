@@ -57,17 +57,19 @@ int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
 
     RegisterClassW(&wndClass);
 
-    HWND const hWnd = CreateWindowExW(
+    HWND const window = CreateWindowExW(
         0, WindowClass, WindowTitle,
-        WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
+        WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 1024, 1024,
         nullptr, nullptr, instanceHandle, nullptr
     );
 
-    ShowWindow(hWnd, showCommand);
-    UpdateWindow(hWnd);
+    Renderer renderer(window);
 
-    Renderer renderer(hWnd);
+    SetWindowLongPtr(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&renderer));
+    ShowWindow(window, showCommand);
+    UpdateWindow(window);
+
 
     while (true)
     {
@@ -99,22 +101,26 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 LRESULT CALLBACK WndProc(HWND const windowHandle, UINT const message, WPARAM const wParam, LPARAM const lParam)
 {
-    if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam))
-    {
-        return true;
-    }
-
     switch (message)
     {
+        case WM_SIZE:
+            if (auto* const renderer = reinterpret_cast<Renderer*>(GetWindowLongPtr(windowHandle, GWLP_USERDATA)))
+            {
+                renderer->OnWindowSize(LOWORD(lParam), HIWORD(lParam), wParam == SIZE_MINIMIZED);
+            }
+            return 0;
+
         case WM_DESTROY:
             PostQuitMessage(0);
-            break;
-
-        default:
-            return DefWindowProc(windowHandle, message, wParam, lParam);
+            return 0;
     }
 
-    return 0;
+    if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam))
+    {
+        return 1;
+    }
+
+    return DefWindowProc(windowHandle, message, wParam, lParam);
 }
 
 std::optional<WPARAM> ProcessWindowMessages()
