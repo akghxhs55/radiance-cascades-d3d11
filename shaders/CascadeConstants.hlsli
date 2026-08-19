@@ -1,5 +1,6 @@
 cbuffer CascadePassConstants : register(b1)
 {
+    uint2 ViewportSize;
     uint2 SceneSize;
 
     uint CascadeIndex;
@@ -9,6 +10,8 @@ cbuffer CascadePassConstants : register(b1)
     uint BaseRayExponent;
     float BaseIntervalLength;
     uint MergeUpperCascade;
+
+    uint2 Padding;
 };
 
 uint CascadeScale(uint cascadeIndex)
@@ -30,8 +33,8 @@ uint2 ProbeCountForCascade(uint cascadeIndex)
 {
     uint spacing = ProbeSpacingForCascade(cascadeIndex);
 
-    // round(sceneSize / spacing) + 2
-    return (SceneSize + spacing / 2) / spacing + 2;
+    // round(ViewportSize / spacing) + 2
+    return (ViewportSize + spacing / 2) / spacing + 2;
 }
 
 uint RaysPerProbeForCascade(uint cascadeIndex)

@@ -1,69 +1,25 @@
-static const uint MaxCircles = 16;
-static const uint MaxBoxes = 16;
-static const uint MaxRayMarchSteps = 128;
-
-static const uint HitNothing = 0;
-static const uint HitCircle = 1;
-static const uint HitBox = 2;
-
-static const float HitEpsilon = 0.2;
 static const float Tau = 6.28318530718;
 
-cbuffer SceneConstants : register(b0)
-{
-    float4 CircleData[MaxCircles];
-    float4 CircleEmission[MaxCircles];
-    float4 BoxData[MaxBoxes];
-
-    uint CircleCount;
-    uint BoxCount;
-
-    uint2 ScenePadding;
-};
+static const uint MaxRayMarchSteps = 128;
+static const float DistanceFieldSafetyMargin = 1.0;
+static const float MinimumRayMarchStep = 0.25;
 
 #include "CascadeConstants.hlsli"
 
 Texture2D<float4> UpperCascade : register(t0);
+Texture2D<float> Obstacle : register(t1);
+Texture2D<float4> Emission : register(t2);
+Texture2D<float> DistanceField : register(t3);
 
-float SignedDistanceToBox(float2 position, float4 boxData)
+bool IsInsideScene(float2 scenePosition)
 {
-    float2 offset = abs(position - boxData.xy) - boxData.zw;
-    return length(max(offset, 0.0)) + min(max(offset.x, offset.y), 0.0);
+    return all(scenePosition >= 0.0) && all(scenePosition < float2(SceneSize));
 }
 
-float DistanceToScene(float2 position, out uint hitType, out uint hitIndex)
+float DistanceToSceneBounds(float2 position)
 {
-    float nearestDistance = 3.402823466e+38;
-    hitType = HitNothing;
-    hitIndex = 0;
-
-    [loop]
-    for (uint circleIndex = 0; circleIndex < CircleCount; ++circleIndex)
-    {
-        float circleDistance = length(position - CircleData[circleIndex].xy) - CircleData[circleIndex].z;
-
-        if (circleDistance < nearestDistance)
-        {
-            nearestDistance = circleDistance;
-            hitType = HitCircle;
-            hitIndex = circleIndex;
-        }
-    }
-
-    [loop]
-    for (uint boxIndex = 0; boxIndex < BoxCount; ++boxIndex)
-    {
-        float boxDistance = SignedDistanceToBox(position, BoxData[boxIndex]);
-
-        if (boxDistance < nearestDistance)
-        {
-            nearestDistance = boxDistance;
-            hitType = HitBox;
-            hitIndex = boxIndex;
-        }
-    }
-
-    return nearestDistance;
+	float2 outsideDistance = max(max(-position, position - float2(SceneSize)), 0.0);
+	return length(outsideDistance);
 }
 
 float4 RayMarchInterval(float2 probePosition, float2 rayDirection, float intervalStart, float intervalEnd)
@@ -73,25 +29,33 @@ float4 RayMarchInterval(float2 probePosition, float2 rayDirection, float interva
     [loop]
     for (uint stepIndex = 0; stepIndex < MaxRayMarchSteps; ++stepIndex)
     {
-        if (distanceAlongRay >= intervalEnd) break;
+        if (distanceAlongRay >= intervalEnd)
+        {
+            break;
+        }
 
         float2 samplePosition = probePosition + rayDirection * distanceAlongRay;
 
-        uint hitType;
-        uint hitIndex;
-        float sceneDistance = DistanceToScene(samplePosition, hitType, hitIndex);
-
-        if (sceneDistance <= HitEpsilon)
+        if (!IsInsideScene(samplePosition))
         {
-            if (hitType == HitCircle)
-            {
-                return float4(CircleEmission[hitIndex].rgb, 0.0);
-            }
+            float distanceToScene = DistanceToSceneBounds(samplePosition);
 
-            return float4(0.0, 0.0, 0.0, 0.0);
+            distanceAlongRay += max(distanceToScene, MinimumRayMarchStep);
+
+            continue;
         }
 
-        distanceAlongRay += max(sceneDistance, HitEpsilon);
+        uint2 texel = uint2(floor(samplePosition));
+
+        if (Obstacle.Load(int3(texel, 0)) > 0.5)
+        {
+            float3 emission = Emission.Load(int3(texel, 0)).rgb;
+            return float4(emission, 0.0);
+        }
+
+        float distanceToObstacle = DistanceField.Load(int3(texel, 0));
+
+        distanceAlongRay += max(distanceToObstacle - DistanceFieldSafetyMargin, MinimumRayMarchStep);
     }
 
     return float4(0.0, 0.0, 0.0, 1.0);

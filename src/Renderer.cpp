@@ -7,6 +7,9 @@
 #include <string>
 #include <cmath>
 #include <cstdint>
+#include <cassert>
+#include <deque>
+#include <limits>
 
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
@@ -14,46 +17,9 @@
 
 #include "D3DUtils.h"
 #include "Scene.h"
-#include "Vertex.h"
 
 namespace
 {
-    constexpr std::uint32_t MaxCircles = 16;
-    constexpr std::uint32_t MaxBoxes = 16;
-
-    struct GpuCircleData
-    {
-        DirectX::XMFLOAT2 center;
-        float radius;
-        float padding;
-    };
-    static_assert(sizeof(GpuCircleData) == 16);
-
-    struct GpuCircleEmission
-    {
-        DirectX::XMFLOAT3 emission;
-        float padding;
-    };
-    static_assert(sizeof(GpuCircleEmission) == 16);
-
-    struct GpuBox
-    {
-        DirectX::XMFLOAT2 center;
-        DirectX::XMFLOAT2 halfExtent;
-    };
-    static_assert(sizeof(GpuBox) == 16);
-
-    struct SceneConstants
-    {
-        std::array<GpuCircleData, MaxCircles> circleData = {};
-        std::array<GpuCircleEmission, MaxCircles> circleEmission = {};
-        std::array<GpuBox, MaxBoxes> boxes = {};
-        std::uint32_t circleCount = 0u;
-        std::uint32_t boxCount = 0u;
-        std::array<std::uint32_t, 2> padding = {};
-    };
-    static_assert(sizeof(SceneConstants) % 16 == 0);
-
     struct FinalGatherConstants
     {
         std::uint32_t displayMode;
@@ -105,7 +71,6 @@ Renderer::Renderer(HWND const windowHandle)
     CreateRasterizerState();
     CreateShaders();
 
-    CreateSceneConstantBuffer();
     CreateCascadeConstantBuffer();
     CreateFinalGatherConstantBuffer();
     CreateCascadeResources();
@@ -127,18 +92,52 @@ Renderer::~Renderer() noexcept
 
     finalGatherConstantBuffer.Reset();
     cascadeConstantBuffer.Reset();
-    sceneConstantBuffer.Reset();
+
+    distanceFieldTextureView.Reset();
+    distanceFieldTexture.Reset();
+    emissionTextureView.Reset();
+    emissionTexture.Reset();
+    obstacleTextureView.Reset();
+    obstacleTexture.Reset();
+
+    finalGatherPixelShader.Reset();
     cascadePixelShader.Reset();
     fullscreenVertexShader.Reset();
+
     rasterizerState.Reset();
     renderTargetView.Reset();
-    swapChain.Reset();
     adapter.Reset();
+    swapChain.Reset();
     deviceContext.Reset();
     device.Reset();
 }
 
-void Renderer::Render(Scene const& scene)
+void Renderer::SetScene(Scene const &scene)
+{
+    std::size_t const pixelCount = static_cast<std::size_t>(scene.width) * static_cast<std::size_t>(scene.height);
+    assert(scene.obstaclePixels.size() == pixelCount);
+    assert(scene.emissionPixels.size() == pixelCount);
+
+    if (scene.width != sceneWidth || scene.height != sceneHeight)
+    {
+        CreateSceneTextures(scene.width, scene.height);
+        sceneWidth = scene.width;
+        sceneHeight = scene.height;
+    }
+
+    UploadSceneTextures(scene);
+
+    if (std::uint32_t const newCascadeCount = CalculateRequiredCascadeCount(); newCascadeCount != cascadeCount)
+    {
+        cascadeCount = newCascadeCount;
+        debugCascadeIndex = std::min(debugCascadeIndex, static_cast<int>(cascadeCount) - 1);
+        CreateCascadeResources();
+    }
+
+    hasScene = true;
+}
+
+void Renderer::Render()
 {
     if (isMinimized)
     {
@@ -147,7 +146,8 @@ void Renderer::Render(Scene const& scene)
 
     ApplyPendingResize();
 
-    UpdateSceneConstantBuffer(scene);
+    assert(hasScene && "Renderer::SetScene must be called before Render()");
+    if (!hasScene) return;
 
     RenderRadianceCascades();
     RenderFinalImage();
@@ -229,7 +229,10 @@ void Renderer::CreateDeviceAndSwapChain()
         "IDXGIDevice::GetAdapter failed"
     );
 
-    dxgiAdapter.As(&adapter);
+    ThrowIfFailed(
+        dxgiAdapter.As(&adapter),
+        "IDXGIAdapter::QueryInterface for IDXGIAdapter3 failed"
+    );
 
     DXGI_SWAP_CHAIN_DESC createdAtSwapChainDesc;
     ThrowIfFailed(
@@ -318,17 +321,151 @@ void Renderer::CreateShaders()
     );
 }
 
-void Renderer::CreateSceneConstantBuffer()
+void Renderer::CreateSceneTextures(UINT const width, UINT const height)
 {
-    constexpr D3D11_BUFFER_DESC bufferDesc{
-        .ByteWidth = static_cast<UINT>(sizeof(SceneConstants)),
+    D3D11_TEXTURE2D_DESC const obstacleTextureDesc{
+        .Width = width,
+        .Height = height,
+        .MipLevels = 1u,
+        .ArraySize = 1u,
+        .Format = DXGI_FORMAT_R8_UNORM,
+        .SampleDesc = { .Count = 1u },
         .Usage = D3D11_USAGE_DEFAULT,
-        .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
     };
 
     ThrowIfFailed(
-        device->CreateBuffer(&bufferDesc, nullptr, sceneConstantBuffer.ReleaseAndGetAddressOf()),
-        "ID3D11Device::CreateBuffer for scene constants failed"
+        device->CreateTexture2D(&obstacleTextureDesc, nullptr, obstacleTexture.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateTexture2D for obstacle texture failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateShaderResourceView(obstacleTexture.Get(), nullptr, obstacleTextureView.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateShaderResourceView for obstacle texture failed"
+    );
+
+    D3D11_TEXTURE2D_DESC const emissionTextureDesc{
+        .Width = width,
+        .Height = height,
+        .MipLevels = 1u,
+        .ArraySize = 1u,
+        .Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+        .SampleDesc = { .Count = 1u },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+    };
+
+    ThrowIfFailed(
+        device->CreateTexture2D(&emissionTextureDesc, nullptr, emissionTexture.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateTexture2D for emission texture failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateShaderResourceView(emissionTexture.Get(), nullptr, emissionTextureView.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateShaderResourceView for emission texture failed"
+    );
+
+    D3D11_TEXTURE2D_DESC const distanceFieldTextureDesc{
+        .Width = width,
+        .Height = height,
+        .MipLevels = 1u,
+        .ArraySize = 1u,
+        .Format = DXGI_FORMAT_R32_FLOAT,
+        .SampleDesc = { .Count = 1u },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+    };
+
+    ThrowIfFailed(
+        device->CreateTexture2D(&distanceFieldTextureDesc, nullptr, distanceFieldTexture.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateTexture2D for distance field texture failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateShaderResourceView(distanceFieldTexture.Get(), nullptr, distanceFieldTextureView.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateShaderResourceView for distance field texture failed"
+    );
+}
+
+void Renderer::UploadSceneTextures(Scene const &scene)
+{
+    deviceContext->UpdateSubresource(
+        obstacleTexture.Get(), 0, nullptr,
+        scene.obstaclePixels.data(), scene.width * sizeof(std::uint8_t), 0
+    );
+
+    deviceContext->UpdateSubresource(
+        emissionTexture.Get(), 0, nullptr,
+        scene.emissionPixels.data(), scene.width * sizeof(Scene::EmissionPixel), 0
+    );
+
+    GenerateDistanceField(scene);
+}
+
+void Renderer::GenerateDistanceField(Scene const &scene)
+{
+    std::size_t const pixelCount = static_cast<std::size_t>(scene.width) * static_cast<std::size_t>(scene.height);
+
+    std::vector<std::uint32_t> steps(pixelCount, std::numeric_limits<std::uint32_t>::max());
+    std::deque<std::pair<std::uint32_t, std::uint32_t>> queue;
+
+    auto const indexOf = [&scene](std::uint32_t const x, std::uint32_t const y)
+    {
+        return static_cast<std::size_t>(y) * scene.width + x;
+    };
+
+    for (std::uint32_t y = 0; y < scene.height; ++y)
+    {
+        for (std::uint32_t x = 0; x < scene.width; ++x)
+        {
+            if (scene.obstaclePixels[indexOf(x, y)])
+            {
+                steps[indexOf(x, y)] = 0;
+                queue.emplace_back(x, y);
+            }
+        }
+    }
+
+    while (!queue.empty())
+    {
+        auto const [x, y] = queue.front();
+        queue.pop_front();
+
+        std::uint32_t const currentStep = steps[indexOf(x, y)];
+
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            for (int dy = -1; dy <= 1; ++dy)
+            {
+                auto const nextX = static_cast<int>(x) + dx;
+                auto const nextY = static_cast<int>(y) + dy;
+
+                if (nextX < 0 || nextX >= scene.width || nextY < 0 || nextY >= scene.height) continue;
+
+                std::size_t const nextIndex = indexOf(static_cast<std::uint32_t>(nextX), static_cast<std::uint32_t>(nextY));
+
+                if (steps[nextIndex] > currentStep + 1)
+                {
+                    steps[nextIndex] = currentStep + 1;
+                    queue.emplace_back(nextX, nextY);
+                }
+            }
+        }
+    }
+
+    float const noObstacleDistance = std::sqrt(static_cast<float>(scene.width * scene.width + scene.height * scene.height));
+
+    std::vector<float> distanceFieldPixels(pixelCount);
+    for (std::size_t i = 0; i < pixelCount; ++i)
+    {
+        distanceFieldPixels[i] = steps[i] == std::numeric_limits<std::uint32_t>::max()
+            ? noObstacleDistance
+            : static_cast<float>(steps[i]);
+    }
+
+    deviceContext->UpdateSubresource(
+        distanceFieldTexture.Get(), 0, nullptr,
+        distanceFieldPixels.data(), scene.width * sizeof(float), 0
     );
 }
 
@@ -408,43 +545,6 @@ void Renderer::ApplyPendingResize()
     resizePending = false;
 }
 
-void Renderer::UpdateSceneConstantBuffer(Scene const& scene)
-{
-    SceneConstants constants = {};
-
-    for (auto const& circle : scene.circles)
-    {
-        if (constants.circleCount == MaxCircles)
-        {
-            break;
-        }
-
-        std::uint32_t const index = constants.circleCount++;
-        constants.circleData[index] = {
-            .center = circle.center,
-            .radius = circle.radius,
-        };
-        constants.circleEmission[index] = {
-            .emission = circle.emission,
-        };
-    }
-
-    for (auto const& box : scene.boxes)
-    {
-        if (constants.boxCount == MaxBoxes)
-        {
-            break;
-        }
-
-        constants.boxes[constants.boxCount++] = {
-            .center = box.center,
-            .halfExtent = box.halfExtent,
-        };
-    }
-
-    deviceContext->UpdateSubresource(sceneConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
-}
-
 void Renderer::RenderRadianceCascades()
 {
     deviceContext->IASetInputLayout(nullptr);
@@ -456,11 +556,11 @@ void Renderer::RenderRadianceCascades()
     deviceContext->RSSetState(rasterizerState.Get());
     deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 
-    ID3D11Buffer* const constantBuffers[] = {
-        sceneConstantBuffer.Get(),
-        cascadeConstantBuffer.Get(),
-    };
-    deviceContext->PSSetConstantBuffers(0, 2, constantBuffers);
+    deviceContext->PSSetShaderResources(1, 1, obstacleTextureView.GetAddressOf());
+    deviceContext->PSSetShaderResources(2, 1, emissionTextureView.GetAddressOf());
+    deviceContext->PSSetShaderResources(3, 1, distanceFieldTextureView.GetAddressOf());
+
+    deviceContext->PSSetConstantBuffers(0, 1, cascadeConstantBuffer.GetAddressOf());
 
     if (displayMode == 1)
     {
@@ -475,8 +575,8 @@ void Renderer::RenderRadianceCascades()
         }
     }
 
-    ID3D11ShaderResourceView* const nullSRV = nullptr;
-    deviceContext->PSSetShaderResources(0, 1, &nullSRV);
+    constexpr std::array<ID3D11ShaderResourceView*, 4> nullSRVs{ nullptr, nullptr, nullptr, nullptr };
+    deviceContext->PSSetShaderResources(0, 4, nullSRVs.data());
 
     ID3D11RenderTargetView* const nullRTV = nullptr;
     deviceContext->OMSetRenderTargets(1, &nullRTV, nullptr);
@@ -645,8 +745,8 @@ void Renderer::DrawDebugUi()
 
 std::uint32_t Renderer::CalculateRequiredCascadeCount() const
 {
-    auto const width = static_cast<double>(viewport.Width);
-    auto const height = static_cast<double>(viewport.Height);
+    auto const width = static_cast<double>(std::max(viewport.Width, static_cast<float>(sceneWidth)));
+    auto const height = static_cast<double>(std::max(viewport.Height, static_cast<float>(sceneHeight)));
 
     auto const coverageDistance = std::sqrt(width * width + height * height);
 
@@ -713,8 +813,10 @@ Renderer::CascadeResource Renderer::CreateCascadeResource(std::uint32_t const wi
 Renderer::CascadePassConstants Renderer::BuildCascadeConstants(std::uint32_t const cascadeIndex, bool const mergeUpperCascade) const
 {
     return {
-        .sceneWidth = static_cast<std::uint32_t>(viewport.Width),
-        .sceneHeight = static_cast<std::uint32_t>(viewport.Height),
+        .viewportWidth = static_cast<std::uint32_t>(viewport.Width),
+        .viewportHeight = static_cast<std::uint32_t>(viewport.Height),
+        .sceneWidth = sceneWidth,
+        .sceneHeight = sceneHeight,
 
         .cascadeIndex = static_cast<std::uint32_t>(cascadeIndex),
         .cascadeCount = cascadeCount,

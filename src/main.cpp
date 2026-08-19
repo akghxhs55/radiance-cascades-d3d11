@@ -1,50 +1,77 @@
-#include <array>
-#include <optional>
 #include <Windows.h>
 #include <imgui_impl_win32.h>
+
+#include <optional>
+#include <cstdint>
 
 #include "Renderer.h"
 #include "Scene.h"
 
-// Screen-space scene data for a 1024 x 1024 render area.
-// The origin is at the top-left, with +X pointing right and +Y pointing down.
-constexpr std::array SampleCircles = {
-    Circle {
-        .center = { 179.2f, 409.6f },
-        .radius = 51.2f,
-        .emission = { 12.0f, 5.0f, 1.0f },
-    },
-    Circle {
-        .center = { 819.2f, 215.04f },
-        .radius = 30.72f,
-        .emission = { 0.5f, 3.0f, 12.0f },
-    },
-};
+static void FillObstacleRectangle(
+    Scene& scene,
+    int const left,
+    int const top,
+    int const right,
+    int const bottom)
+{
+    for (int y = top; y < bottom; ++y)
+    {
+        for (int x = left; x < right; ++x)
+        {
+            scene.SetObstacle(x, y, true);
+        }
+    }
+}
 
-constexpr std::array SampleBoxes = {
-    Box {
-        .center = { 471.04f, 471.04f },
-        .halfExtent = { 30.72f, 296.96f },
-    },
-    Box {
-        .center = { 266.24f, 757.76f },
-        .halfExtent = { 143.36f, 25.6f },
-    },
-    Box {
-        .center = { 727.04f, 450.56f },
-        .halfExtent = { 25.6f, 128.0f },
-    },
-};
+static void FillEmitterCircle(
+    Scene& scene,
+    int const x,
+    int const y,
+    std::uint32_t const radius,
+    DirectX::XMFLOAT3 const radiance)
+{
+    int const radiusInt = static_cast<int>(radius);
 
-constexpr Scene SampleScene = {
-    .circles = SampleCircles,
-    .boxes = SampleBoxes,
-};
+    for (int dy = -radiusInt; dy < radiusInt; ++dy)
+    {
+        for (int dx = -radiusInt; dx < radiusInt; ++dx)
+        {
+            if (dx * dx + dy * dy > radius * radius) continue;
 
-LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-std::optional<WPARAM> ProcessWindowMessages();
+            scene.SetEmissiveObstacle(x + dx, y + dy, radiance);
+        }
+    }
+}
 
-int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
+static Scene MakeSampleScene()
+{
+    Scene scene(1024u, 1024u);
+
+    FillObstacleRectangle(scene, 440, 175, 500, 767);
+    FillObstacleRectangle(scene, 125, 730, 410, 780);
+    FillObstacleRectangle(scene, 700, 320, 750, 580);
+
+    FillEmitterCircle(
+        scene,
+        180, 410,
+        50,
+        { 12.0f, 5.0f, 1.0f }
+    );
+
+    FillEmitterCircle(
+        scene,
+        820, 215,
+        30,
+        { 0.5f, 3.0f, 12.0f }
+    );
+
+    return scene;
+}
+
+static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+static std::optional<WPARAM> ProcessWindowMessages();
+
+static int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
 {
     constexpr LPCWSTR WindowClass = L"RadianceCascades";
     constexpr LPCWSTR WindowTitle = L"Radiance Cascades";
@@ -70,6 +97,8 @@ int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
     ShowWindow(window, showCommand);
     UpdateWindow(window);
 
+    Scene const SampleScene = MakeSampleScene();
+    renderer.SetScene(SampleScene);
 
     while (true)
     {
@@ -78,7 +107,7 @@ int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
             return static_cast<int>(*exitCode);
         }
 
-        renderer.Render(SampleScene);
+        renderer.Render();
     }
 }
 
@@ -113,6 +142,9 @@ LRESULT CALLBACK WndProc(HWND const windowHandle, UINT const message, WPARAM con
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+
+        default:
+            break;
     }
 
     if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam))

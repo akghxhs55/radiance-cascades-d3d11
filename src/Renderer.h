@@ -19,7 +19,8 @@ public:
     Renderer(Renderer const&) = delete;
     Renderer& operator=(Renderer const&) = delete;
 
-    void Render(Scene const& scene);
+    void SetScene(Scene const& scene);
+    void Render();
     void OnWindowSize(UINT width, UINT height, bool minimized) noexcept;
 
 private:
@@ -27,14 +28,15 @@ private:
     void CreateRenderTargetView();
     void CreateRasterizerState();
     void CreateShaders();
-    void CreateSceneConstantBuffer();
+    void CreateSceneTextures(UINT width, UINT height);
+    void UploadSceneTextures(Scene const& scene);
+    void GenerateDistanceField(Scene const& scene);
     void CreateCascadeConstantBuffer();
     void CreateFinalGatherConstantBuffer();
     void CreateCascadeResources();
     void InitializeImGui();
 
     void ApplyPendingResize();
-    void UpdateSceneConstantBuffer(Scene const& scene);
     void RenderRadianceCascades();
     void RenderCascade(std::uint32_t cascadeIndex, bool mergeUpperCascade = true);
     void RenderFinalImage();
@@ -49,6 +51,8 @@ private:
     bool isMinimized = false;
 
     bool vSyncEnabled = true;
+    bool hasScene = false;
+
     std::uint32_t cascadeCount = 5;
     std::uint32_t baseProbeSpacing = 1;
     std::uint32_t baseRayExponent = 3;
@@ -68,7 +72,15 @@ private:
     Microsoft::WRL::ComPtr<ID3D11PixelShader> cascadePixelShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> finalGatherPixelShader;
 
-    Microsoft::WRL::ComPtr<ID3D11Buffer> sceneConstantBuffer;
+    std::uint32_t sceneWidth = 0;
+    std::uint32_t sceneHeight = 0;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> obstacleTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> obstacleTextureView;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> emissionTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> emissionTextureView;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> distanceFieldTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> distanceFieldTextureView;
+
     Microsoft::WRL::ComPtr<ID3D11Buffer> cascadeConstantBuffer;
     Microsoft::WRL::ComPtr<ID3D11Buffer> finalGatherConstantBuffer;
 
@@ -100,6 +112,8 @@ private:
 
     struct CascadePassConstants
     {
+        std::uint32_t viewportWidth;
+        std::uint32_t viewportHeight;
         std::uint32_t sceneWidth;
         std::uint32_t sceneHeight;
 
@@ -111,6 +125,8 @@ private:
         float baseIntervalLength;
 
         std::uint32_t mergeUpperCascade;
+
+        std::array<std::uint32_t, 2> _padding;
     };
     static_assert(sizeof(CascadePassConstants) % 16 == 0);
 
