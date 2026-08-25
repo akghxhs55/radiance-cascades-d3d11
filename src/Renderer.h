@@ -28,19 +28,24 @@ private:
     void CreateRenderTargetView();
     void CreateRasterizerState();
     void CreateShaders();
-    void CreateSceneTextures(UINT width, UINT height);
-    void UploadSceneTextures(Scene const& scene);
-    void GenerateDistanceField(Scene const& scene);
     void CreateCascadeConstantBuffer();
     void CreateFinalGatherConstantBuffer();
     void CreateCascadeResources();
+    void CreateDistanceFieldConstantsBuffer();
     void InitializeImGui();
+
+    void CreateSceneTextures(UINT width, UINT height);
+    void UploadSceneTextures(Scene const& scene);
+    void GenerateDistanceField();
 
     void ApplyPendingResize();
     void RenderRadianceCascades();
     void RenderCascade(std::uint32_t cascadeIndex, bool mergeUpperCascade = true);
     void RenderFinalImage();
     void DrawDebugUi();
+
+    [[nodiscard]]
+    std::uint32_t CalculateRequiredCascadeCount() const;
 
 private:
     HWND const windowHandle;
@@ -71,21 +76,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> fullscreenVertexShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> cascadePixelShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> finalGatherPixelShader;
-
-    std::uint32_t sceneWidth = 0;
-    std::uint32_t sceneHeight = 0;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> obstacleTexture;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> obstacleTextureView;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> emissionTexture;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> emissionTextureView;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> distanceFieldTexture;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> distanceFieldTextureView;
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> distanceFieldInitShader;
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> distanceFieldJumpFloodShader;
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> distanceFieldFinalizeShader;
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cascadeConstantBuffer;
     Microsoft::WRL::ComPtr<ID3D11Buffer> finalGatherConstantBuffer;
-
-    [[nodiscard]]
-    std::uint32_t CalculateRequiredCascadeCount() const;
 
     struct CascadeDimensions
     {
@@ -99,16 +95,46 @@ private:
     struct CascadeResource
     {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTargetView;
-        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shaderResourceView;
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
 
         CascadeDimensions dimensions;
     };
-
     [[nodiscard]]
-    CascadeResource CreateCascadeResource(std::uint32_t width, std::uint32_t height);
+    CascadeResource CreateCascadeResource(UINT width, UINT height);
 
-    std::array<CascadeResource, 2> cascadeResources;
+    std::array<CascadeResource, 2> cascadeResources{};
+
+    std::uint32_t sceneWidth = 0;
+    std::uint32_t sceneHeight = 0;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> obstacleTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> obstacleSrv;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> emissionTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> emissionSrv;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> distanceFieldTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> distanceFieldSrv;
+    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> distanceFieldUav;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> distanceFieldConstantBuffer;
+
+    struct DistanceFieldResource
+    {
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+    };
+    [[nodiscard]]
+    DistanceFieldResource CreateDistanceFieldResource(UINT width, UINT height);
+
+    std::array<DistanceFieldResource, 2> distanceFieldResources{};
+
+    struct DistanceFieldConstants
+    {
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t jumpSize;
+        std::uint32_t padding;
+    };
+    static_assert(sizeof(DistanceFieldConstants) % 16 == 0);
 
     struct CascadePassConstants
     {

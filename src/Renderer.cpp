@@ -8,8 +8,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cassert>
-#include <deque>
-#include <limits>
 
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
@@ -75,6 +73,8 @@ Renderer::Renderer(HWND const windowHandle)
     CreateFinalGatherConstantBuffer();
     CreateCascadeResources();
 
+    CreateDistanceFieldConstantsBuffer();
+
     InitializeImGui();
 }
 
@@ -90,16 +90,35 @@ Renderer::~Renderer() noexcept
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
 
+    for (auto& cascadeResource : cascadeResources)
+    {
+        cascadeResource.srv.Reset();
+        cascadeResource.rtv.Reset();
+        cascadeResource.texture.Reset();
+    }
+
+    for (auto& distanceFieldResource : distanceFieldResources)
+    {
+        distanceFieldResource.srv.Reset();
+        distanceFieldResource.uav.Reset();
+        distanceFieldResource.texture.Reset();
+    }
+
+    distanceFieldConstantBuffer.Reset();
     finalGatherConstantBuffer.Reset();
     cascadeConstantBuffer.Reset();
 
-    distanceFieldTextureView.Reset();
+    distanceFieldUav.Reset();
+    distanceFieldSrv.Reset();
     distanceFieldTexture.Reset();
-    emissionTextureView.Reset();
+    emissionSrv.Reset();
     emissionTexture.Reset();
-    obstacleTextureView.Reset();
+    obstacleSrv.Reset();
     obstacleTexture.Reset();
 
+    distanceFieldFinalizeShader.Reset();
+    distanceFieldJumpFloodShader.Reset();
+    distanceFieldInitShader.Reset();
     finalGatherPixelShader.Reset();
     cascadePixelShader.Reset();
     fullscreenVertexShader.Reset();
@@ -319,153 +338,32 @@ void Renderer::CreateShaders()
         ),
         "ID3D11Device::CreatePixelShader failed"
     );
-}
 
-void Renderer::CreateSceneTextures(UINT const width, UINT const height)
-{
-    D3D11_TEXTURE2D_DESC const obstacleTextureDesc{
-        .Width = width,
-        .Height = height,
-        .MipLevels = 1u,
-        .ArraySize = 1u,
-        .Format = DXGI_FORMAT_R8_UNORM,
-        .SampleDesc = { .Count = 1u },
-        .Usage = D3D11_USAGE_DEFAULT,
-        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
-    };
-
+    shaderBlob = CompileShader(L"shaders/DistanceField.hlsl", "CSInit", "cs_5_0");
     ThrowIfFailed(
-        device->CreateTexture2D(&obstacleTextureDesc, nullptr, obstacleTexture.ReleaseAndGetAddressOf()),
-        "ID3D11Device::CreateTexture2D for obstacle texture failed"
+        device->CreateComputeShader(
+            shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr,
+            distanceFieldInitShader.ReleaseAndGetAddressOf()
+        ),
+        "ID3D11Device::CreateComputeShader failed"
     );
 
+    shaderBlob = CompileShader(L"shaders/DistanceField.hlsl", "CSJumpFlood", "cs_5_0");
     ThrowIfFailed(
-        device->CreateShaderResourceView(obstacleTexture.Get(), nullptr, obstacleTextureView.ReleaseAndGetAddressOf()),
-        "ID3D11Device::CreateShaderResourceView for obstacle texture failed"
+        device->CreateComputeShader(
+            shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr,
+            distanceFieldJumpFloodShader.ReleaseAndGetAddressOf()
+        ),
+        "ID3D11Device::CreateComputeShader failed"
     );
 
-    D3D11_TEXTURE2D_DESC const emissionTextureDesc{
-        .Width = width,
-        .Height = height,
-        .MipLevels = 1u,
-        .ArraySize = 1u,
-        .Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
-        .SampleDesc = { .Count = 1u },
-        .Usage = D3D11_USAGE_DEFAULT,
-        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
-    };
-
+    shaderBlob = CompileShader(L"shaders/DistanceField.hlsl", "CSFinalize", "cs_5_0");
     ThrowIfFailed(
-        device->CreateTexture2D(&emissionTextureDesc, nullptr, emissionTexture.ReleaseAndGetAddressOf()),
-        "ID3D11Device::CreateTexture2D for emission texture failed"
-    );
-
-    ThrowIfFailed(
-        device->CreateShaderResourceView(emissionTexture.Get(), nullptr, emissionTextureView.ReleaseAndGetAddressOf()),
-        "ID3D11Device::CreateShaderResourceView for emission texture failed"
-    );
-
-    D3D11_TEXTURE2D_DESC const distanceFieldTextureDesc{
-        .Width = width,
-        .Height = height,
-        .MipLevels = 1u,
-        .ArraySize = 1u,
-        .Format = DXGI_FORMAT_R32_FLOAT,
-        .SampleDesc = { .Count = 1u },
-        .Usage = D3D11_USAGE_DEFAULT,
-        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
-    };
-
-    ThrowIfFailed(
-        device->CreateTexture2D(&distanceFieldTextureDesc, nullptr, distanceFieldTexture.ReleaseAndGetAddressOf()),
-        "ID3D11Device::CreateTexture2D for distance field texture failed"
-    );
-
-    ThrowIfFailed(
-        device->CreateShaderResourceView(distanceFieldTexture.Get(), nullptr, distanceFieldTextureView.ReleaseAndGetAddressOf()),
-        "ID3D11Device::CreateShaderResourceView for distance field texture failed"
-    );
-}
-
-void Renderer::UploadSceneTextures(Scene const &scene)
-{
-    deviceContext->UpdateSubresource(
-        obstacleTexture.Get(), 0, nullptr,
-        scene.obstaclePixels.data(), scene.width * sizeof(std::uint8_t), 0
-    );
-
-    deviceContext->UpdateSubresource(
-        emissionTexture.Get(), 0, nullptr,
-        scene.emissionPixels.data(), scene.width * sizeof(Scene::EmissionPixel), 0
-    );
-
-    GenerateDistanceField(scene);
-}
-
-void Renderer::GenerateDistanceField(Scene const &scene)
-{
-    std::size_t const pixelCount = static_cast<std::size_t>(scene.width) * static_cast<std::size_t>(scene.height);
-
-    std::vector<std::uint32_t> steps(pixelCount, std::numeric_limits<std::uint32_t>::max());
-    std::deque<std::pair<std::uint32_t, std::uint32_t>> queue;
-
-    auto const indexOf = [&scene](std::uint32_t const x, std::uint32_t const y)
-    {
-        return static_cast<std::size_t>(y) * scene.width + x;
-    };
-
-    for (std::uint32_t y = 0; y < scene.height; ++y)
-    {
-        for (std::uint32_t x = 0; x < scene.width; ++x)
-        {
-            if (scene.obstaclePixels[indexOf(x, y)])
-            {
-                steps[indexOf(x, y)] = 0;
-                queue.emplace_back(x, y);
-            }
-        }
-    }
-
-    while (!queue.empty())
-    {
-        auto const [x, y] = queue.front();
-        queue.pop_front();
-
-        std::uint32_t const currentStep = steps[indexOf(x, y)];
-
-        for (int dx = -1; dx <= 1; ++dx)
-        {
-            for (int dy = -1; dy <= 1; ++dy)
-            {
-                auto const nextX = static_cast<int>(x) + dx;
-                auto const nextY = static_cast<int>(y) + dy;
-
-                if (nextX < 0 || nextX >= scene.width || nextY < 0 || nextY >= scene.height) continue;
-
-                std::size_t const nextIndex = indexOf(static_cast<std::uint32_t>(nextX), static_cast<std::uint32_t>(nextY));
-
-                if (steps[nextIndex] > currentStep + 1)
-                {
-                    steps[nextIndex] = currentStep + 1;
-                    queue.emplace_back(nextX, nextY);
-                }
-            }
-        }
-    }
-
-    float const noObstacleDistance = std::sqrt(static_cast<float>(scene.width * scene.width + scene.height * scene.height));
-
-    std::vector<float> distanceFieldPixels(pixelCount);
-    for (std::size_t i = 0; i < pixelCount; ++i)
-    {
-        distanceFieldPixels[i] = steps[i] == std::numeric_limits<std::uint32_t>::max()
-            ? noObstacleDistance
-            : static_cast<float>(steps[i]);
-    }
-
-    deviceContext->UpdateSubresource(
-        distanceFieldTexture.Get(), 0, nullptr,
-        distanceFieldPixels.data(), scene.width * sizeof(float), 0
+        device->CreateComputeShader(
+            shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr,
+            distanceFieldFinalizeShader.ReleaseAndGetAddressOf()
+        ),
+        "ID3D11Device::CreateComputeShader failed"
     );
 }
 
@@ -512,6 +410,20 @@ void Renderer::CreateCascadeResources()
     cascadeResources[1] = CreateCascadeResource(maxWidth, maxHeight);
 }
 
+void Renderer::CreateDistanceFieldConstantsBuffer()
+{
+    constexpr D3D11_BUFFER_DESC bufferDesc{
+        .ByteWidth = static_cast<UINT>(sizeof(DistanceFieldConstants)),
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
+    };
+
+    ThrowIfFailed(
+        device->CreateBuffer(&bufferDesc, nullptr, distanceFieldConstantBuffer.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateBuffer for distance field constants failed"
+    );
+}
+
 void Renderer::InitializeImGui()
 {
     IMGUI_CHECKVERSION();
@@ -545,6 +457,162 @@ void Renderer::ApplyPendingResize()
     resizePending = false;
 }
 
+void Renderer::CreateSceneTextures(UINT const width, UINT const height)
+{
+    D3D11_TEXTURE2D_DESC const obstacleTextureDesc{
+        .Width = width,
+        .Height = height,
+        .MipLevels = 1u,
+        .ArraySize = 1u,
+        .Format = DXGI_FORMAT_R8_UNORM,
+        .SampleDesc = { .Count = 1u },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+    };
+
+    ThrowIfFailed(
+        device->CreateTexture2D(&obstacleTextureDesc, nullptr, obstacleTexture.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateTexture2D for obstacle texture failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateShaderResourceView(obstacleTexture.Get(), nullptr, obstacleSrv.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateShaderResourceView for obstacle texture failed"
+    );
+
+    D3D11_TEXTURE2D_DESC const emissionTextureDesc{
+        .Width = width,
+        .Height = height,
+        .MipLevels = 1u,
+        .ArraySize = 1u,
+        .Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+        .SampleDesc = { .Count = 1u },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+    };
+
+    ThrowIfFailed(
+        device->CreateTexture2D(&emissionTextureDesc, nullptr, emissionTexture.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateTexture2D for emission texture failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateShaderResourceView(emissionTexture.Get(), nullptr, emissionSrv.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateShaderResourceView for emission texture failed"
+    );
+
+    D3D11_TEXTURE2D_DESC const distanceFieldTextureDesc{
+        .Width = width,
+        .Height = height,
+        .MipLevels = 1u,
+        .ArraySize = 1u,
+        .Format = DXGI_FORMAT_R32_FLOAT,
+        .SampleDesc = { .Count = 1u },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+    };
+
+    ThrowIfFailed(
+        device->CreateTexture2D(&distanceFieldTextureDesc, nullptr, distanceFieldTexture.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateTexture2D for distance field texture failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateShaderResourceView(distanceFieldTexture.Get(), nullptr, distanceFieldSrv.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateShaderResourceView for distance field texture failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateUnorderedAccessView(distanceFieldTexture.Get(), nullptr, distanceFieldUav.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateUnorderedAccessView for distance field texture failed"
+    );
+
+    distanceFieldResources[0] = CreateDistanceFieldResource(width, height);
+    distanceFieldResources[1] = CreateDistanceFieldResource(width, height);
+}
+
+void Renderer::UploadSceneTextures(Scene const &scene)
+{
+    deviceContext->UpdateSubresource(
+        obstacleTexture.Get(), 0, nullptr,
+        scene.obstaclePixels.data(), scene.width * sizeof(std::uint8_t), 0
+    );
+
+    deviceContext->UpdateSubresource(
+        emissionTexture.Get(), 0, nullptr,
+        scene.emissionPixels.data(), scene.width * sizeof(Scene::EmissionPixel), 0
+    );
+
+    GenerateDistanceField();
+}
+
+void Renderer::GenerateDistanceField()
+{
+    assert(sceneWidth > 0 && sceneHeight > 0);
+
+    constexpr UINT threadGroupSize = 8u;
+    UINT const dispatchX = (sceneWidth + threadGroupSize - 1) / threadGroupSize;
+    UINT const dispatchY = (sceneHeight + threadGroupSize - 1) / threadGroupSize;
+
+    DistanceFieldConstants constants{
+        .width = sceneWidth,
+        .height = sceneHeight,
+        .jumpSize = 0,
+    };
+
+    deviceContext->CSSetShader(distanceFieldInitShader.Get(), nullptr, 0);
+
+    deviceContext->UpdateSubresource(distanceFieldConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
+    deviceContext->CSSetConstantBuffers(0, 1, distanceFieldConstantBuffer.GetAddressOf());
+    deviceContext->CSSetUnorderedAccessViews(0, 1, distanceFieldResources[0].uav.GetAddressOf(), nullptr);
+    deviceContext->CSSetShaderResources(0, 1, obstacleSrv.GetAddressOf());
+
+    deviceContext->Dispatch(dispatchX, dispatchY, 1);
+
+    constexpr std::array<ID3D11UnorderedAccessView*, 2> nullUavs = { nullptr, nullptr };
+    constexpr std::array<ID3D11ShaderResourceView*, 2> nullSrvs = { nullptr, nullptr };
+    deviceContext->CSSetUnorderedAccessViews(0, 2, nullUavs.data(), nullptr);
+    deviceContext->CSSetShaderResources(0, 2, nullSrvs.data());
+
+    UINT jumpSize = 1u;
+    UINT const maxDimension = std::max(sceneWidth, sceneHeight);
+    while (jumpSize < maxDimension)
+    {
+        jumpSize <<= 1u;
+    }
+    jumpSize >>= 1u;
+
+    UINT sourceIndex = 0u;
+    UINT destinationIndex = 1u;
+
+    deviceContext->CSSetShader(distanceFieldJumpFloodShader.Get(), nullptr, 0);
+    while (jumpSize > 0u)
+    {
+        constants.jumpSize = jumpSize;
+        deviceContext->UpdateSubresource(distanceFieldConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
+        deviceContext->CSSetConstantBuffers(0, 1, distanceFieldConstantBuffer.GetAddressOf());
+        deviceContext->CSSetUnorderedAccessViews(0, 1, distanceFieldResources[destinationIndex].uav.GetAddressOf(), nullptr);
+        deviceContext->CSSetShaderResources(1, 1, distanceFieldResources[sourceIndex].srv.GetAddressOf());
+
+        deviceContext->Dispatch(dispatchX, dispatchY, 1);
+
+        deviceContext->CSSetUnorderedAccessViews(0, 1, nullUavs.data(), nullptr);
+        deviceContext->CSSetShaderResources(1, 1, nullSrvs.data());
+
+        std::swap(sourceIndex, destinationIndex);
+        jumpSize >>= 1u;
+    }
+
+    deviceContext->CSSetShader(distanceFieldFinalizeShader.Get(), nullptr, 0);
+    deviceContext->CSSetUnorderedAccessViews(1, 1, distanceFieldUav.GetAddressOf(), nullptr);
+    deviceContext->CSSetShaderResources(1, 1, distanceFieldResources[sourceIndex].srv.GetAddressOf());
+
+    deviceContext->Dispatch(dispatchX, dispatchY, 1);
+
+    deviceContext->CSSetUnorderedAccessViews(0, 2, nullUavs.data(), nullptr);
+    deviceContext->CSSetShaderResources(0, 2, nullSrvs.data());
+}
+
 void Renderer::RenderRadianceCascades()
 {
     deviceContext->IASetInputLayout(nullptr);
@@ -556,9 +624,9 @@ void Renderer::RenderRadianceCascades()
     deviceContext->RSSetState(rasterizerState.Get());
     deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 
-    deviceContext->PSSetShaderResources(1, 1, obstacleTextureView.GetAddressOf());
-    deviceContext->PSSetShaderResources(2, 1, emissionTextureView.GetAddressOf());
-    deviceContext->PSSetShaderResources(3, 1, distanceFieldTextureView.GetAddressOf());
+    deviceContext->PSSetShaderResources(1, 1, obstacleSrv.GetAddressOf());
+    deviceContext->PSSetShaderResources(2, 1, emissionSrv.GetAddressOf());
+    deviceContext->PSSetShaderResources(3, 1, distanceFieldSrv.GetAddressOf());
 
     deviceContext->PSSetConstantBuffers(0, 1, cascadeConstantBuffer.GetAddressOf());
 
@@ -575,19 +643,19 @@ void Renderer::RenderRadianceCascades()
         }
     }
 
-    constexpr std::array<ID3D11ShaderResourceView*, 4> nullSRVs{ nullptr, nullptr, nullptr, nullptr };
-    deviceContext->PSSetShaderResources(0, 4, nullSRVs.data());
+    constexpr std::array<ID3D11ShaderResourceView*, 4> nullSrvs{ nullptr, nullptr, nullptr, nullptr };
+    deviceContext->PSSetShaderResources(0, 4, nullSrvs.data());
 
-    ID3D11RenderTargetView* const nullRTV = nullptr;
-    deviceContext->OMSetRenderTargets(1, &nullRTV, nullptr);
+    ID3D11RenderTargetView* const nullRtv = nullptr;
+    deviceContext->OMSetRenderTargets(1, &nullRtv, nullptr);
 }
 
 void Renderer::RenderCascade(std::uint32_t const cascadeIndex, bool const mergeUpperCascade)
 {
     CascadeResource& current = cascadeResources[cascadeIndex % 2];
 
-    ID3D11ShaderResourceView* const nullSRV = nullptr;
-    deviceContext->PSSetShaderResources(0, 1, &nullSRV);
+    ID3D11ShaderResourceView* const nullSrv = nullptr;
+    deviceContext->PSSetShaderResources(0, 1, &nullSrv);
 
     auto const [width, height] = CalculateCascadeDimensions(cascadeIndex);
 
@@ -601,7 +669,7 @@ void Renderer::RenderCascade(std::uint32_t const cascadeIndex, bool const mergeU
     };
 
     deviceContext->RSSetViewports(1, &cascadeViewport);
-    deviceContext->OMSetRenderTargets(1, current.renderTargetView.GetAddressOf(), nullptr);
+    deviceContext->OMSetRenderTargets(1, current.rtv.GetAddressOf(), nullptr);
 
     CascadePassConstants const constants = BuildCascadeConstants(cascadeIndex, mergeUpperCascade);
     deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
@@ -609,18 +677,18 @@ void Renderer::RenderCascade(std::uint32_t const cascadeIndex, bool const mergeU
     if (mergeUpperCascade && cascadeIndex + 1 < cascadeCount)
     {
         CascadeResource& upperCascade = cascadeResources[(cascadeIndex + 1) % 2];
-        deviceContext->PSSetShaderResources(0, 1, upperCascade.shaderResourceView.GetAddressOf());
+        deviceContext->PSSetShaderResources(0, 1, upperCascade.srv.GetAddressOf());
     }
     else
     {
-        deviceContext->PSSetShaderResources(0, 1, &nullSRV);
+        deviceContext->PSSetShaderResources(0, 1, &nullSrv);
     }
 
     deviceContext->Draw(3, 0);
 
-    ID3D11RenderTargetView* const nullRTV = nullptr;
-    deviceContext->OMSetRenderTargets(1, &nullRTV, nullptr);
-    deviceContext->PSSetShaderResources(0, 1, &nullSRV);
+    ID3D11RenderTargetView* const nullRtv = nullptr;
+    deviceContext->OMSetRenderTargets(1, &nullRtv, nullptr);
+    deviceContext->PSSetShaderResources(0, 1, &nullSrv);
 }
 
 void Renderer::RenderFinalImage()
@@ -651,7 +719,7 @@ void Renderer::RenderFinalImage()
     deviceContext->PSSetShaderResources(
         0,
         1,
-        cascadeResources[selectedCascadeIndex % 2].shaderResourceView.GetAddressOf()
+        cascadeResources[selectedCascadeIndex % 2].srv.GetAddressOf()
     );
 
     deviceContext->RSSetViewports(1, &viewport);
@@ -662,8 +730,8 @@ void Renderer::RenderFinalImage()
 
     deviceContext->Draw(3, 0);
 
-    ID3D11ShaderResourceView* const nullSRV = nullptr;
-    deviceContext->PSSetShaderResources(0, 1, &nullSRV);
+    ID3D11ShaderResourceView* const nullSrv = nullptr;
+    deviceContext->PSSetShaderResources(0, 1, &nullSrv);
 }
 
 void Renderer::DrawDebugUi()
@@ -771,7 +839,7 @@ Renderer::CascadeDimensions Renderer::CalculateCascadeDimensions(std::uint32_t c
     };
 }
 
-Renderer::CascadeResource Renderer::CreateCascadeResource(std::uint32_t const width, std::uint32_t const height)
+Renderer::CascadeResource Renderer::CreateCascadeResource(UINT const width, UINT const height)
 {
     CascadeResource resource{
         .dimensions = {
@@ -799,11 +867,46 @@ Renderer::CascadeResource Renderer::CreateCascadeResource(std::uint32_t const wi
     );
 
     ThrowIfFailed(
-        device->CreateRenderTargetView(resource.texture.Get(), nullptr, resource.renderTargetView.ReleaseAndGetAddressOf()),
+        device->CreateRenderTargetView(resource.texture.Get(), nullptr, resource.rtv.ReleaseAndGetAddressOf()),
         "ID3D11Device::CreateRenderTargetView failed");
 
     ThrowIfFailed(
-        device->CreateShaderResourceView(resource.texture.Get(), nullptr, resource.shaderResourceView.ReleaseAndGetAddressOf()),
+        device->CreateShaderResourceView(resource.texture.Get(), nullptr, resource.srv.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateShaderResourceView failed"
+    );
+
+    return resource;
+}
+
+Renderer::DistanceFieldResource Renderer::CreateDistanceFieldResource(UINT const width, UINT const height)
+{
+    DistanceFieldResource resource{};
+
+    D3D11_TEXTURE2D_DESC const desc{
+        .Width = width,
+        .Height = height,
+        .MipLevels = 1,
+        .ArraySize = 1,
+        .Format = DXGI_FORMAT_R32_UINT,
+        .SampleDesc = {
+            .Count = 1,
+        },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+    };
+
+    ThrowIfFailed(
+        device->CreateTexture2D(&desc, nullptr, resource.texture.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateTexture2D failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateUnorderedAccessView(resource.texture.Get(), nullptr, resource.uav.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateUnorderedAccessView failed"
+    );
+
+    ThrowIfFailed(
+        device->CreateShaderResourceView(resource.texture.Get(), nullptr, resource.srv.ReleaseAndGetAddressOf()),
         "ID3D11Device::CreateShaderResourceView failed"
     );
 
