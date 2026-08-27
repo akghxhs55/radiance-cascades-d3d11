@@ -1,11 +1,13 @@
+#include "Renderer.h"
+#include "Scene.h"
+#include "SceneEditor.h"
+
 #include <Windows.h>
 #include <imgui_impl_win32.h>
+#include <windowsx.h>
 
 #include <optional>
 #include <cstdint>
-
-#include "Renderer.h"
-#include "Scene.h"
 
 static void FillObstacleRectangle(
     Scene& scene,
@@ -18,7 +20,7 @@ static void FillObstacleRectangle(
     {
         for (int x = left; x < right; ++x)
         {
-            scene.SetObstacle(x, y, true);
+            scene.SetObstacle(x, y);
         }
     }
 }
@@ -68,8 +70,41 @@ static Scene MakeSampleScene()
     return scene;
 }
 
+struct AppState final
+{
+    Renderer* renderer;
+    SceneEditor* editor;
+
+    enum class StrokeButton
+    {
+        None,
+        Left,
+        Right,
+        Middle,
+    };
+
+    StrokeButton activeButton = StrokeButton::None;
+
+    UINT pendingWidth = 0;
+    UINT pendingHeight = 0;
+    bool resizePending = false;
+    bool isInSizeMove = false;
+    bool hasDeferredResize = false;
+};
+
 static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 static std::optional<WPARAM> ProcessWindowMessages();
+
+static void QueuePendingResize(AppState& state)
+{
+    if (state.pendingWidth == 0 || state.pendingHeight == 0)
+    {
+        return;
+    }
+
+    state.renderer->OnWindowSize(state.pendingWidth, state.pendingHeight, false);
+    state.resizePending = true;
+}
 
 static int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNORMAL)
 {
@@ -91,14 +126,38 @@ static int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNO
         nullptr, nullptr, instanceHandle, nullptr
     );
 
-    Renderer renderer(window);
+    Renderer renderer{window};
 
-    SetWindowLongPtr(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&renderer));
+    Scene scene = MakeSampleScene();
+    renderer.SetScene(scene);
+
+    SceneEditor editor{scene};
+
+    AppState state{
+        .renderer = &renderer,
+        .editor = &editor
+    };
+
+    SetWindowLongPtr(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&state));
     ShowWindow(window, showCommand);
     UpdateWindow(window);
 
-    Scene const SampleScene = MakeSampleScene();
-    renderer.SetScene(SampleScene);
+    auto drawUi = [&editor]
+    {
+        ImGui::Begin("Scene Editor");
+
+        int brushRadius = editor.GetBrushRadius();
+        if (ImGui::SliderInt("Brush Radius", &brushRadius, 1, 64))
+        {
+            editor.SetBrushRadius(brushRadius);
+        }
+
+        ImGui::Text("Left Click: Emissive");
+        ImGui::Text("Right Click: Obstacle");
+        ImGui::Text("Middle Click: Eraser");
+
+        ImGui::End();
+    };
 
     while (true)
     {
@@ -107,7 +166,28 @@ static int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNO
             return static_cast<int>(*exitCode);
         }
 
-        renderer.Render();
+        if (state.resizePending)
+        {
+            editor.EndStroke();
+            state.activeButton = AppState::StrokeButton::None;
+
+            if (GetCapture() == window)
+            {
+                ReleaseCapture();
+            }
+            static_cast<void>(editor.TakePendingChange());
+
+            scene.Resize(state.pendingWidth, state.pendingHeight);
+            renderer.SetScene(scene);
+
+            state.resizePending = false;
+        }
+        else
+        {
+            renderer.UpdateScene(scene, editor.TakePendingChange());
+        }
+
+        renderer.Render(drawUi);
     }
 }
 
@@ -128,16 +208,150 @@ int WINAPI WinMain(
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-LRESULT CALLBACK WndProc(HWND const windowHandle, UINT const message, WPARAM const wParam, LPARAM const lParam)
+static bool HandleEditorMouseMessage(
+    HWND const windowHandle,
+    UINT const message,
+    LPARAM const lParam,
+    bool const imguiWantsMouse,
+    AppState& state)
 {
+    auto const beginStroke = [&](SceneEditor::EditTool const tool, AppState::StrokeButton const button)
+    {
+        if (imguiWantsMouse || state.activeButton != AppState::StrokeButton::None)
+        {
+            return false;
+        }
+
+        POINT const position{
+            .x = GET_X_LPARAM(lParam),
+            .y = GET_Y_LPARAM(lParam),
+        };
+
+        state.editor->BeginStroke(tool, position);
+        state.activeButton = button;
+        SetCapture(windowHandle);
+        return true;
+    };
+
+    auto const endStroke = [&](AppState::StrokeButton const button)
+    {
+        if (state.activeButton != button)
+        {
+            return false;
+        }
+
+        state.editor->EndStroke();
+        state.activeButton = AppState::StrokeButton::None;
+
+        if (GetCapture() == windowHandle)
+        {
+            ReleaseCapture();
+        }
+
+        return true;
+    };
+
     switch (message)
     {
-        case WM_SIZE:
-            if (auto* const renderer = reinterpret_cast<Renderer*>(GetWindowLongPtr(windowHandle, GWLP_USERDATA)))
+        case WM_LBUTTONDOWN:
+            return beginStroke(SceneEditor::EditTool::Emissive, AppState::StrokeButton::Left);
+
+        case WM_RBUTTONDOWN:
+            return beginStroke(SceneEditor::EditTool::Obstacle, AppState::StrokeButton::Right);
+
+        case WM_MBUTTONDOWN:
+            return beginStroke(SceneEditor::EditTool::Eraser, AppState::StrokeButton::Middle);
+
+        case WM_MOUSEMOVE:
+            if (state.activeButton == AppState::StrokeButton::None)
             {
-                renderer->OnWindowSize(LOWORD(lParam), HIWORD(lParam), wParam == SIZE_MINIMIZED);
+                return false;
+            }
+
+            state.editor->ContinueStroke({
+                .x = GET_X_LPARAM(lParam),
+                .y = GET_Y_LPARAM(lParam),
+            });
+            return true;
+
+        case WM_LBUTTONUP:
+            return endStroke(AppState::StrokeButton::Left);
+
+        case WM_RBUTTONUP:
+            return endStroke(AppState::StrokeButton::Right);
+
+        case WM_MBUTTONUP:
+            return endStroke(AppState::StrokeButton::Middle);
+
+        case WM_CAPTURECHANGED:
+        case WM_CANCELMODE:
+        case WM_KILLFOCUS:
+            if (state.activeButton == AppState::StrokeButton::None)
+            {
+                return false;
+            }
+
+            state.editor->EndStroke();
+            state.activeButton = AppState::StrokeButton::None;
+            return true;
+
+        default:
+            return false;
+    }
+}
+
+LRESULT CALLBACK WndProc(HWND const windowHandle, UINT const message, WPARAM const wParam, LPARAM const lParam)
+{
+    auto* const state = reinterpret_cast<AppState*>(GetWindowLongPtr(windowHandle, GWLP_USERDATA));
+    if (state == nullptr)
+    {
+        return DefWindowProc(windowHandle, message, wParam, lParam);
+    }
+
+    switch (message)
+    {
+        case WM_ENTERSIZEMOVE:
+            state->isInSizeMove = true;
+            state->hasDeferredResize = false;
+            return 0;
+
+        case WM_EXITSIZEMOVE:
+            state->isInSizeMove = false;
+            if (state->hasDeferredResize)
+            {
+                QueuePendingResize(*state);
             }
             return 0;
+
+        case WM_SIZE:
+        {
+            UINT const width = LOWORD(lParam);
+            UINT const height = HIWORD(lParam);
+            bool const isMinimized = wParam == SIZE_MINIMIZED;
+
+            if (isMinimized)
+            {
+                state->renderer->OnWindowSize(width, height, true);
+                return 0;
+            }
+
+            if (width > 0 && height > 0)
+            {
+                state->pendingWidth = width;
+                state->pendingHeight = height;
+
+                if (!state->isInSizeMove)
+                {
+                    QueuePendingResize(*state);
+                }
+                else
+                {
+                    state->hasDeferredResize = true;
+                }
+            }
+
+            return 0;
+        }
 
         case WM_DESTROY:
             PostQuitMessage(0);
@@ -145,6 +359,11 @@ LRESULT CALLBACK WndProc(HWND const windowHandle, UINT const message, WPARAM con
 
         default:
             break;
+    }
+
+    if (HandleEditorMouseMessage(windowHandle, message, lParam, ImGui::GetIO().WantCaptureMouse, *state))
+    {
+        return 0;
     }
 
     if (ImGui_ImplWin32_WndProcHandler(windowHandle, message, wParam, lParam))

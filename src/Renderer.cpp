@@ -1,6 +1,13 @@
 #include "Renderer.h"
 
+#include "D3DUtils.h"
+#include "Scene.h"
+#include "SceneChange.h"
+
 #include <d3dcompiler.h>
+#include "imgui.h"
+#include "imgui_impl_dx11.h"
+#include "imgui_impl_win32.h"
 
 #include <array>
 #include <algorithm>
@@ -8,13 +15,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cassert>
-
-#include "imgui.h"
-#include "imgui_impl_dx11.h"
-#include "imgui_impl_win32.h"
-
-#include "D3DUtils.h"
-#include "Scene.h"
 
 namespace
 {
@@ -156,7 +156,52 @@ void Renderer::SetScene(Scene const &scene)
     hasScene = true;
 }
 
-void Renderer::Render()
+void Renderer::UpdateScene(Scene const& scene, SceneChange const& change)
+{
+    if (!change.emissionChanged && !change.obstacleChanged)
+    {
+        return;
+    }
+
+    if (!hasScene || scene.width != sceneWidth || scene.height != sceneHeight)
+    {
+        SetScene(scene);
+        return;
+    }
+
+    DirtyRect const& dirty = change.dirtyRect;
+    assert(dirty.valid);
+
+    D3D11_BOX const box{
+        .left = static_cast<UINT>(dirty.left),
+        .top = static_cast<UINT>(dirty.top),
+        .front = 0u,
+        .right = static_cast<UINT>(dirty.right),
+        .bottom = static_cast<UINT>(dirty.bottom),
+        .back = 1u,
+    };
+
+    std::size_t const firstPixel = static_cast<std::size_t>(dirty.top) * scene.width + dirty.left;
+
+    if (change.emissionChanged)
+    {
+        deviceContext->UpdateSubresource(
+            emissionTexture.Get(), 0, &box,
+            scene.emissionPixels.data() + firstPixel, scene.width * sizeof(Scene::EmissionPixel), 0
+        );
+    }
+    if (change.obstacleChanged)
+    {
+        deviceContext->UpdateSubresource(
+            obstacleTexture.Get(), 0, &box,
+            scene.obstaclePixels.data() + firstPixel, scene.width * sizeof(std::uint8_t), 0
+        );
+
+        GenerateDistanceField();
+    }
+}
+
+void Renderer::Render(DrawUiCallback const& drawUi)
 {
     if (isMinimized)
     {
@@ -168,10 +213,7 @@ void Renderer::Render()
     assert(hasScene && "Renderer::SetScene must be called before Render()");
     if (!hasScene) return;
 
-    RenderRadianceCascades();
-    RenderFinalImage();
-
-    DrawDebugUi();
+    DrawImGui(drawUi);
 
     ThrowIfFailed(
         swapChain->Present(vSyncEnabled ? 1 : 0, 0),
@@ -734,12 +776,28 @@ void Renderer::RenderFinalImage()
     deviceContext->PSSetShaderResources(0, 1, &nullSrv);
 }
 
-void Renderer::DrawDebugUi()
+void Renderer::DrawImGui(DrawUiCallback const &drawUi)
 {
+    RenderRadianceCascades();
+    RenderFinalImage();
+
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
+    DrawRendererDebugUi();
+
+    if (drawUi)
+    {
+        drawUi();
+    }
+
+    ImGui::Render();
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+void Renderer::DrawRendererDebugUi()
+{
     ImGuiIO const& io = ImGui::GetIO();
 
     ImGui::Begin("Renderer");
@@ -806,9 +864,6 @@ void Renderer::DrawDebugUi()
     }
 
     ImGui::End();
-
-    ImGui::Render();
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
 std::uint32_t Renderer::CalculateRequiredCascadeCount() const

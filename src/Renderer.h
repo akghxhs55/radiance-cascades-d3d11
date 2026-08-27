@@ -7,12 +7,16 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 
 struct Scene;
+struct SceneChange;
 
 class Renderer final
 {
 public:
+    using DrawUiCallback = std::function<void()>;
+
     explicit Renderer(HWND windowHandle);
     ~Renderer() noexcept;
 
@@ -20,7 +24,8 @@ public:
     Renderer& operator=(Renderer const&) = delete;
 
     void SetScene(Scene const& scene);
-    void Render();
+    void UpdateScene(Scene const& scene, SceneChange const& change);
+    void Render(DrawUiCallback const& drawUi = {});
     void OnWindowSize(UINT width, UINT height, bool minimized) noexcept;
 
 private:
@@ -42,7 +47,8 @@ private:
     void RenderRadianceCascades();
     void RenderCascade(std::uint32_t cascadeIndex, bool mergeUpperCascade = true);
     void RenderFinalImage();
-    void DrawDebugUi();
+    void DrawImGui(DrawUiCallback const& drawUi);
+    void DrawRendererDebugUi();
 
     [[nodiscard]]
     std::uint32_t CalculateRequiredCascadeCount() const;
