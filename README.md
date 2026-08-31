@@ -31,9 +31,8 @@ Radiance Cascades distributes lighting samples across multiple distance ranges:
 
 - C++20
 - Win32
-- Direct3D 11 / DXGI
-- HLSL Shader Model 5.0
-- CMake
+- Direct3D 11
+- HLSL
 - Dear ImGui
 
 ## Build
