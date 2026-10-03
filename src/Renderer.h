@@ -8,7 +8,9 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 
+class Profiler;
 struct Scene;
 struct SceneChange;
 
@@ -24,6 +26,7 @@ public:
     Renderer& operator=(Renderer const&) = delete;
 
     void SetScene(Scene const& scene);
+    void BeginFrame();
     void UpdateScene(Scene const& scene, SceneChange const& change);
     void Render(DrawUiCallback const& drawUi = {});
     void OnWindowSize(UINT width, UINT height, bool minimized) noexcept;
@@ -78,6 +81,7 @@ private:
     D3D11_VIEWPORT viewport{};
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTargetView;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerState;
+    std::unique_ptr<Profiler> profiler;
 
     Microsoft::WRL::ComPtr<ID3D11VertexShader> fullscreenVertexShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> cascadePixelShader;

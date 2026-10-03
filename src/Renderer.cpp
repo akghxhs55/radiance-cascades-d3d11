@@ -1,6 +1,7 @@
 #include "Renderer.h"
 
 #include "D3DUtils.h"
+#include "Profiler.h"
 #include "Scene.h"
 #include "SceneChange.h"
 
@@ -74,6 +75,8 @@ Renderer::Renderer(HWND const windowHandle)
     CreateCascadeResources();
 
     CreateDistanceFieldConstantsBuffer();
+
+    profiler = std::make_unique<Profiler>(device.Get());
 
     InitializeImGui();
 }
@@ -156,6 +159,12 @@ void Renderer::SetScene(Scene const &scene)
     hasScene = true;
 }
 
+void Renderer::BeginFrame()
+{
+    profiler->BeginFrame(deviceContext.Get());
+    ApplyPendingResize();
+}
+
 void Renderer::UpdateScene(Scene const& scene, SceneChange const& change)
 {
     if (!change.emissionChanged && !change.obstacleChanged)
@@ -205,20 +214,28 @@ void Renderer::Render(DrawUiCallback const& drawUi)
 {
     if (isMinimized)
     {
+        profiler->EndGpuFrame(deviceContext.Get());
+        profiler->EndFrame();
         return;
     }
 
-    ApplyPendingResize();
-
     assert(hasScene && "Renderer::SetScene must be called before Render()");
-    if (!hasScene) return;
+    if (!hasScene)
+    {
+        profiler->EndGpuFrame(deviceContext.Get());
+        profiler->EndFrame();
+        return;
+    }
 
     DrawImGui(drawUi);
+    profiler->EndGpuFrame(deviceContext.Get());
 
     ThrowIfFailed(
         swapChain->Present(vSyncEnabled ? 1 : 0, 0),
         "IDXGISwapChain::Present failed"
     );
+
+    profiler->EndFrame();
 }
 
 void Renderer::OnWindowSize(UINT const width, UINT const height, bool const minimized) noexcept
@@ -592,6 +609,8 @@ void Renderer::GenerateDistanceField()
 {
     assert(sceneWidth > 0 && sceneHeight > 0);
 
+    profiler->BeginScope(ProfileMetric::DistanceField, deviceContext.Get());
+
     constexpr UINT threadGroupSize = 8u;
     UINT const dispatchX = (sceneWidth + threadGroupSize - 1) / threadGroupSize;
     UINT const dispatchY = (sceneHeight + threadGroupSize - 1) / threadGroupSize;
@@ -653,10 +672,14 @@ void Renderer::GenerateDistanceField()
 
     deviceContext->CSSetUnorderedAccessViews(0, 2, nullUavs.data(), nullptr);
     deviceContext->CSSetShaderResources(0, 2, nullSrvs.data());
+
+    profiler->EndScope(ProfileMetric::DistanceField, deviceContext.Get());
 }
 
 void Renderer::RenderRadianceCascades()
 {
+    profiler->BeginScope(ProfileMetric::RadianceCascades, deviceContext.Get());
+
     deviceContext->IASetInputLayout(nullptr);
     deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -690,6 +713,8 @@ void Renderer::RenderRadianceCascades()
 
     ID3D11RenderTargetView* const nullRtv = nullptr;
     deviceContext->OMSetRenderTargets(1, &nullRtv, nullptr);
+
+    profiler->EndScope(ProfileMetric::RadianceCascades, deviceContext.Get());
 }
 
 void Renderer::RenderCascade(std::uint32_t const cascadeIndex, bool const mergeUpperCascade)
@@ -735,6 +760,8 @@ void Renderer::RenderCascade(std::uint32_t const cascadeIndex, bool const mergeU
 
 void Renderer::RenderFinalImage()
 {
+    profiler->BeginScope(ProfileMetric::FinalGather, deviceContext.Get());
+
     deviceContext->IASetInputLayout(nullptr);
     deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -774,6 +801,8 @@ void Renderer::RenderFinalImage()
 
     ID3D11ShaderResourceView* const nullSrv = nullptr;
     deviceContext->PSSetShaderResources(0, 1, &nullSrv);
+
+    profiler->EndScope(ProfileMetric::FinalGather, deviceContext.Get());
 }
 
 void Renderer::DrawImGui(DrawUiCallback const &drawUi)
@@ -804,6 +833,27 @@ void Renderer::DrawRendererDebugUi()
 
     ImGui::Text("FPS: %.1f", io.Framerate);
     ImGui::Text("Frame Time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
+    ImGui::Text("CPU Frame: %.3f ms", profiler->GetCpuFrameMilliseconds());
+
+    auto const drawProfileMetric = [this](char const* const label, ProfileMetric const metric)
+    {
+        Profiler::MetricTiming const timing = profiler->GetMetricTiming(metric);
+        ImGui::Text("%s CPU: %.3f ms", label, timing.cpuMilliseconds);
+        if (timing.gpuValid)
+        {
+            ImGui::Text("%s GPU: %.3f ms", label, timing.gpuMilliseconds);
+        }
+        else
+        {
+            ImGui::Text("%s GPU: pending", label);
+        }
+    };
+
+    ImGui::SeparatorText("Profiler");
+    ImGui::TextDisabled("GPU timings are asynchronous (up to 4 frames delayed).");
+    drawProfileMetric("Last Distance Field", ProfileMetric::DistanceField);
+    drawProfileMetric("Radiance Cascades", ProfileMetric::RadianceCascades);
+    drawProfileMetric("Final Gather", ProfileMetric::FinalGather);
 
     ImGui::Text("Cascade Count: %u", cascadeCount);
 

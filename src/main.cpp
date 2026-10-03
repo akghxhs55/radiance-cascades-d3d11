@@ -166,6 +166,8 @@ static int Run(HINSTANCE const instanceHandle, int const showCommand = SW_SHOWNO
             return static_cast<int>(*exitCode);
         }
 
+        renderer.BeginFrame();
+
         if (state.resizePending)
         {
             editor.EndStroke();

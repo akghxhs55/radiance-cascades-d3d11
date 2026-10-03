@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(RadianceCascades
         src/main.cpp
         src/Renderer.cpp
+        src/Profiler.cpp
         src/SceneEditor.cpp
 
         external/imgui/imgui.cpp
