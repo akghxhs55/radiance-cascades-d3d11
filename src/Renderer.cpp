@@ -693,7 +693,7 @@ void Renderer::RenderRadianceCascades()
     deviceContext->PSSetShaderResources(2, 1, emissionSrv.GetAddressOf());
     deviceContext->PSSetShaderResources(3, 1, distanceFieldSrv.GetAddressOf());
 
-    deviceContext->PSSetConstantBuffers(0, 1, cascadeConstantBuffer.GetAddressOf());
+    deviceContext->PSSetConstantBuffers(1, 1, cascadeConstantBuffer.GetAddressOf());
 
     if (displayMode == 1)
     {
