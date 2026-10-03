@@ -96,7 +96,7 @@ Renderer::~Renderer() noexcept
     for (auto& cascadeResource : cascadeResources)
     {
         cascadeResource.srv.Reset();
-        cascadeResource.rtv.Reset();
+        cascadeResource.uav.Reset();
         cascadeResource.texture.Reset();
     }
 
@@ -123,7 +123,7 @@ Renderer::~Renderer() noexcept
     distanceFieldJumpFloodShader.Reset();
     distanceFieldInitShader.Reset();
     finalGatherPixelShader.Reset();
-    cascadePixelShader.Reset();
+    cascadeComputeShader.Reset();
     fullscreenVertexShader.Reset();
 
     rasterizerState.Reset();
@@ -380,13 +380,13 @@ void Renderer::CreateShaders()
         "ID3D11Device::CreateVertexShader failed"
     );
 
-    shaderBlob = CompileShader(L"shaders/Cascade.hlsl", "PSCascade", "ps_5_0");
+    shaderBlob = CompileShader(L"shaders/Cascade.hlsl", "CSCascade", "cs_5_0");
     ThrowIfFailed(
-        device->CreatePixelShader(
+        device->CreateComputeShader(
             shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr,
-            cascadePixelShader.ReleaseAndGetAddressOf()
+            cascadeComputeShader.ReleaseAndGetAddressOf()
         ),
-        "ID3D11Device::CreatePixelShader failed"
+        "ID3D11Device::CreateComputeShader failed"
     );
 
     shaderBlob = CompileShader(L"shaders/FinalGather.hlsl", "PSFinalGather", "ps_5_0");
@@ -678,22 +678,15 @@ void Renderer::GenerateDistanceField()
 
 void Renderer::RenderRadianceCascades()
 {
-    profiler->BeginScope(ProfileMetric::RadianceCascades, deviceContext.Get());
+    profiler->BeginScope(ProfileMetric::RadianceCascades, deviceContext.G`et());
 
-    deviceContext->IASetInputLayout(nullptr);
-    deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    deviceContext->CSSetShader(cascadeComputeShader.Get(), nullptr, 0);
 
-    deviceContext->VSSetShader(fullscreenVertexShader.Get(), nullptr, 0);
-    deviceContext->PSSetShader(cascadePixelShader.Get(), nullptr, 0);
+    deviceContext->CSSetShaderResources(1, 1, obstacleSrv.GetAddressOf());
+    deviceContext->CSSetShaderResources(2, 1, emissionSrv.GetAddressOf());
+    deviceContext->CSSetShaderResources(3, 1, distanceFieldSrv.GetAddressOf());
 
-    deviceContext->RSSetState(rasterizerState.Get());
-    deviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-
-    deviceContext->PSSetShaderResources(1, 1, obstacleSrv.GetAddressOf());
-    deviceContext->PSSetShaderResources(2, 1, emissionSrv.GetAddressOf());
-    deviceContext->PSSetShaderResources(3, 1, distanceFieldSrv.GetAddressOf());
-
-    deviceContext->PSSetConstantBuffers(1, 1, cascadeConstantBuffer.GetAddressOf());
+    deviceContext->CSSetConstantBuffers(1, 1, cascadeConstantBuffer.GetAddressOf());
 
     if (displayMode == 1)
     {
@@ -709,10 +702,8 @@ void Renderer::RenderRadianceCascades()
     }
 
     constexpr std::array<ID3D11ShaderResourceView*, 4> nullSrvs{ nullptr, nullptr, nullptr, nullptr };
-    deviceContext->PSSetShaderResources(0, 4, nullSrvs.data());
-
-    ID3D11RenderTargetView* const nullRtv = nullptr;
-    deviceContext->OMSetRenderTargets(1, &nullRtv, nullptr);
+    deviceContext->CSSetShaderResources(0, 4, nullSrvs.data());
+    deviceContext->CSSetShader(nullptr, nullptr, 0);
 
     profiler->EndScope(ProfileMetric::RadianceCascades, deviceContext.Get());
 }
@@ -722,21 +713,11 @@ void Renderer::RenderCascade(std::uint32_t const cascadeIndex, bool const mergeU
     CascadeResource& current = cascadeResources[cascadeIndex % 2];
 
     ID3D11ShaderResourceView* const nullSrv = nullptr;
-    deviceContext->PSSetShaderResources(0, 1, &nullSrv);
+    deviceContext->CSSetShaderResources(0, 1, &nullSrv);
 
     auto const [width, height] = CalculateCascadeDimensions(cascadeIndex);
 
-    D3D11_VIEWPORT const cascadeViewport{
-        .TopLeftX = 0.0f,
-        .TopLeftY = 0.0f,
-        .Width = static_cast<float>(width),
-        .Height = static_cast<float>(height),
-        .MinDepth = 0.0f,
-        .MaxDepth = 1.0f,
-    };
-
-    deviceContext->RSSetViewports(1, &cascadeViewport);
-    deviceContext->OMSetRenderTargets(1, current.rtv.GetAddressOf(), nullptr);
+    deviceContext->CSSetUnorderedAccessViews(0, 1, current.uav.GetAddressOf(), nullptr);
 
     CascadePassConstants const constants = BuildCascadeConstants(cascadeIndex, mergeUpperCascade);
     deviceContext->UpdateSubresource(cascadeConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
@@ -744,18 +725,23 @@ void Renderer::RenderCascade(std::uint32_t const cascadeIndex, bool const mergeU
     if (mergeUpperCascade && cascadeIndex + 1 < cascadeCount)
     {
         CascadeResource& upperCascade = cascadeResources[(cascadeIndex + 1) % 2];
-        deviceContext->PSSetShaderResources(0, 1, upperCascade.srv.GetAddressOf());
+        deviceContext->CSSetShaderResources(0, 1, upperCascade.srv.GetAddressOf());
     }
     else
     {
-        deviceContext->PSSetShaderResources(0, 1, &nullSrv);
+        deviceContext->CSSetShaderResources(0, 1, &nullSrv);
     }
 
-    deviceContext->Draw(3, 0);
+    constexpr UINT threadGroupSize = 8; // Matches CSCascade's numthreads.
+    deviceContext->Dispatch(
+        (width + threadGroupSize - 1) / threadGroupSize,
+        (height + threadGroupSize - 1) / threadGroupSize,
+        1
+    );
 
-    ID3D11RenderTargetView* const nullRtv = nullptr;
-    deviceContext->OMSetRenderTargets(1, &nullRtv, nullptr);
-    deviceContext->PSSetShaderResources(0, 1, &nullSrv);
+    ID3D11UnorderedAccessView* const nullUav = nullptr;
+    deviceContext->CSSetUnorderedAccessViews(0, 1, &nullUav, nullptr);
+    deviceContext->CSSetShaderResources(0, 1, &nullSrv);
 }
 
 void Renderer::RenderFinalImage()
@@ -963,7 +949,7 @@ Renderer::CascadeResource Renderer::CreateCascadeResource(UINT const width, UINT
             .Count = 1,
         },
         .Usage = D3D11_USAGE_DEFAULT,
-        .BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+        .BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE,
     };
 
     ThrowIfFailed(
@@ -972,8 +958,8 @@ Renderer::CascadeResource Renderer::CreateCascadeResource(UINT const width, UINT
     );
 
     ThrowIfFailed(
-        device->CreateRenderTargetView(resource.texture.Get(), nullptr, resource.rtv.ReleaseAndGetAddressOf()),
-        "ID3D11Device::CreateRenderTargetView failed");
+        device->CreateUnorderedAccessView(resource.texture.Get(), nullptr, resource.uav.ReleaseAndGetAddressOf()),
+        "ID3D11Device::CreateUnorderedAccessView failed");
 
     ThrowIfFailed(
         device->CreateShaderResourceView(resource.texture.Get(), nullptr, resource.srv.ReleaseAndGetAddressOf()),

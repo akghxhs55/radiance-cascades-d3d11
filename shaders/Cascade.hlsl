@@ -10,6 +10,7 @@ Texture2D<float4> UpperCascade : register(t0);
 Texture2D<float> Obstacle : register(t1);
 Texture2D<float4> Emission : register(t2);
 Texture2D<float> DistanceField : register(t3);
+RWTexture2D<float4> OutputCascade : register(u0);
 
 bool IsInsideScene(float2 scenePosition)
 {
@@ -102,13 +103,8 @@ float4 SampleUpperCascade(float2 probePosition, uint currentRayIndex)
     return lerp(upperRow, lowerRow, interpolation.y);
 }
 
-struct PSInput
-{
-    float4 position : SV_Position;
-    float2 uv : TEXCOORD0;
-};
-
-float4 PSCascade(PSInput input) : SV_Target
+[numthreads(8, 8, 1)]
+void CSCascade(uint3 threadId : SV_DispatchThreadID)
 {
     uint2 probeCount = ProbeCountForCascade(CascadeIndex);
     uint probeSpacing = ProbeSpacingForCascade(CascadeIndex);
@@ -118,12 +114,12 @@ float4 PSCascade(PSInput input) : SV_Target
     float intervalStart = interval.x;
     float intervalEnd = interval.y;
 
-    uint2 texelCoord = uint2(input.position.xy);
+    uint2 texelCoord = threadId.xy;
     uint2 probeCoord = texelCoord / storedRayBlockSize;
 
     if (probeCoord.x >= probeCount.x || probeCoord.y >= probeCount.y)
     {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return;
     }
 
     float2 probePosition = (float2(probeCoord) - 0.5) * probeSpacing;
@@ -151,5 +147,5 @@ float4 PSCascade(PSInput input) : SV_Target
         accumulatedResult += localResult;
     }
 
-    return accumulatedResult * 0.25;
+    OutputCascade[texelCoord] = accumulatedResult * 0.25;
 }

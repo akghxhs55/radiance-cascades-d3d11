@@ -84,7 +84,7 @@ private:
     std::unique_ptr<Profiler> profiler;
 
     Microsoft::WRL::ComPtr<ID3D11VertexShader> fullscreenVertexShader;
-    Microsoft::WRL::ComPtr<ID3D11PixelShader> cascadePixelShader;
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> cascadeComputeShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> finalGatherPixelShader;
     Microsoft::WRL::ComPtr<ID3D11ComputeShader> distanceFieldInitShader;
     Microsoft::WRL::ComPtr<ID3D11ComputeShader> distanceFieldJumpFloodShader;
@@ -105,7 +105,7 @@ private:
     struct CascadeResource
     {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
 
         CascadeDimensions dimensions;
